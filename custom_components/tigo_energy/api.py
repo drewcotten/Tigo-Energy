@@ -112,11 +112,7 @@ class TigoApiClient:
             encoded = base64.b64encode(raw).decode()
             headers = {"Authorization": f"Basic {encoded}"}
 
-            response = await self._async_request_with_429_retry("POST", "/users/login", headers=headers)
-            if response.status in LOGIN_FALLBACK_STATUSES:
-                response = await self._async_request_with_429_retry(
-                    "GET", "/users/login", headers=headers
-                )
+            response = await self._async_login_with_fallback(headers=headers)
 
             if response.status == 401:
                 raise TigoApiAuthError("Invalid username or password")
@@ -135,6 +131,27 @@ class TigoApiClient:
             )
             if user_id is not None:
                 self._account_id = str(user_id)
+
+    async def _async_login_with_fallback(self, *, headers: dict[str, str]) -> ClientResponse:
+        """Attempt login using preferred and legacy endpoint variants.
+
+        Preferred v3 flow is POST /user/login. Some environments have accepted
+        /users/login historically, so keep that as compatibility fallback.
+        """
+        attempts: tuple[tuple[str, str], ...] = (
+            ("POST", "/user/login"),
+            ("GET", "/user/login"),
+            ("POST", "/users/login"),
+            ("GET", "/users/login"),
+        )
+        response: ClientResponse | None = None
+        for idx, (method, path) in enumerate(attempts):
+            response = await self._async_request_with_429_retry(method, path, headers=headers)
+            if response.status not in LOGIN_FALLBACK_STATUSES:
+                return response
+            if idx == len(attempts) - 1:
+                return response
+        return response
 
     async def async_list_systems(self) -> list[dict[str, Any]]:
         """List systems accessible by the account."""
@@ -172,12 +189,13 @@ class TigoApiClient:
         start: datetime,
         end: datetime,
         metric: str,
+        query_tz: tzinfo | None = None,
     ) -> str:
         """Fetch aggregate CSV for one metric."""
         params = {
             "system_id": system_id,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": _format_query_timestamp(start, query_tz=query_tz),
+            "end": _format_query_timestamp(end, query_tz=query_tz),
             "level": "minute",
             "param": metric,
             "header": "id",
@@ -190,18 +208,44 @@ class TigoApiClient:
         system_id: int,
         start: datetime,
         end: datetime,
-        metric: str,
+        metric: str | None = None,
+        query_tz: tzinfo | None = None,
     ) -> str:
-        """Fetch combined CSV for one metric."""
-        params = {
+        """Fetch combined CSV for one system window.
+
+        Uses documented v3 params first (`level`), then retries with `agg`
+        alias shape, then legacy `param/header` variants when metric is
+        provided.
+        """
+        params_level = {
             "system_id": system_id,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+            "start": _format_query_timestamp(start, query_tz=query_tz),
+            "end": _format_query_timestamp(end, query_tz=query_tz),
             "level": "minute",
-            "param": metric,
-            "header": "id",
         }
-        return await self._async_request_text("GET", "/data/combined", params=params)
+        params_agg = {
+            "system_id": system_id,
+            "start": _format_query_timestamp(start, query_tz=query_tz),
+            "end": _format_query_timestamp(end, query_tz=query_tz),
+            "agg": "minute",
+        }
+        attempts: list[dict[str, Any]] = [params_level, params_agg]
+        if metric not in (None, ""):
+            attempts.append({**params_level, "param": metric, "header": "id"})
+            attempts.append({**params_agg, "param": metric, "header": "id"})
+
+        last_error: TigoApiError | None = None
+        for idx, params in enumerate(attempts):
+            try:
+                return await self._async_request_text("GET", "/data/combined", params=params)
+            except (TigoApiAuthError, TigoApiConnectionError, TigoApiRateLimitError):
+                raise
+            except TigoApiError as err:
+                last_error = err
+                if idx == len(attempts) - 1:
+                    raise
+
+        raise last_error or TigoApiError("Combined request failed")
 
     async def _async_request_json(
         self,
@@ -355,11 +399,14 @@ def parse_tigo_timestamp(
 
     # Common Tigo formats observed in community clients.
     formats = (
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S.%f",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%d %H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S%z",
         "%m/%d/%Y %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S.%f",
         "%Y/%m/%d %H:%M:%S",
     )
     for fmt in formats:
@@ -372,6 +419,20 @@ def parse_tigo_timestamp(
             continue
 
     return None
+
+
+def _format_query_timestamp(value: datetime, *, query_tz: tzinfo | None) -> str:
+    """Format request timestamp for telemetry query params.
+
+    When query_tz is provided, convert to site-local wall-clock time and
+    emit an offset-free ISO string because Tigo aggregate/combined windowing
+    in some environments behaves as local bucket time.
+    """
+    if query_tz is None:
+        return value.replace(microsecond=0).isoformat(timespec="seconds")
+
+    localized = value.astimezone(query_tz)
+    return localized.replace(tzinfo=None, microsecond=0).isoformat(timespec="seconds")
 
 
 def parse_tigo_aggregate_csv(
@@ -475,6 +536,13 @@ def _retry_delay_seconds(response: ClientResponse, attempt: int) -> float:
                 parsed = parsed.replace(tzinfo=UTC)
             return max(0.0, (parsed.astimezone(UTC) - datetime.now(UTC)).total_seconds())
         except (TypeError, ValueError):
+            pass
+
+    limit_reset = response.headers.get("X-Rate-Limit-Reset")
+    if limit_reset:
+        try:
+            return max(0.0, float(limit_reset.strip()))
+        except ValueError:
             pass
 
     base = min(DEFAULT_429_BACKOFF_SECONDS * (2**attempt), MAX_429_BACKOFF_SECONDS)
