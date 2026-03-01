@@ -48,6 +48,7 @@ The integration setup flow is:
    - `single_system` (default)
    - `all_systems`
 4. If `single_system`, select the system to track.
+5. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
 
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
 
@@ -57,7 +58,7 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 
 - `summary_poll_seconds` (default `60`)
 - `module_poll_seconds` (default `300`)
-- `enable_module_telemetry` (default `false`)
+- `enable_module_telemetry` (default `false`, also selectable during onboarding)
 - `stale_threshold_seconds` (default `3600`)
 - `backfill_window_minutes` (default `120`)
 - `recent_cutoff_minutes` (default `20`)

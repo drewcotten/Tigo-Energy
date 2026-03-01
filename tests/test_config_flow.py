@@ -21,6 +21,7 @@ from custom_components.tigo_energy.const import (
     DOMAIN,
     ENTRY_MODE_ALL_SYSTEMS,
     ENTRY_MODE_SINGLE_SYSTEM,
+    OPT_ENABLE_MODULE_TELEMETRY,
 )
 
 
@@ -60,11 +61,19 @@ async def test_config_flow_single_system_success(hass):
             result["flow_id"],
             {CONF_SYSTEM_ID: "1001"},
         )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "module_telemetry"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {OPT_ENABLE_MODULE_TELEMETRY: True},
+        )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_ENTRY_MODE] == ENTRY_MODE_SINGLE_SYSTEM
     assert result["data"][CONF_SYSTEM_ID] == 1001
     assert result["data"][CONF_ACCOUNT_ID] == "42"
+    assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is True
 
 
 async def test_config_flow_all_systems_success(hass):
@@ -93,10 +102,18 @@ async def test_config_flow_all_systems_success(hass):
             result["flow_id"],
             {CONF_ENTRY_MODE: ENTRY_MODE_ALL_SYSTEMS},
         )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "module_telemetry"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {OPT_ENABLE_MODULE_TELEMETRY: False},
+        )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_ENTRY_MODE] == ENTRY_MODE_ALL_SYSTEMS
     assert sorted(result["data"]["system_ids"]) == [1001, 1002]
+    assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is False
 
 
 async def test_config_flow_invalid_auth(hass):

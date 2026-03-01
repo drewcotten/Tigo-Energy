@@ -24,6 +24,13 @@
           "system_id": "System"
         }
       },
+      "module_telemetry": {
+        "title": "Module telemetry",
+        "description": "Enable per-module Pin, Vin, Iin, and RSSI sensors. Large systems can create many entities.",
+        "data": {
+          "enable_module_telemetry": "Enable module-level telemetry"
+        }
+      },
       "reauth_confirm": {
         "title": "Reauthenticate",
         "description": "Update your Tigo Energy credentials.",

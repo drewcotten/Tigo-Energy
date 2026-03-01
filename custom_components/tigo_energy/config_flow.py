@@ -63,6 +63,9 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._password: str = ""
         self._account_id: str = ""
         self._systems: list[FlowSystemRecord] = []
+        self._selected_entry_mode: str = ENTRY_MODE_SINGLE_SYSTEM
+        self._selected_system_id: int | None = None
+        self._enable_module_telemetry: bool = DEFAULT_ENABLE_MODULE_TELEMETRY
         self._reauth_entry: config_entries.ConfigEntry | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -103,20 +106,10 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Choose whether this entry tracks one system or all systems."""
         if user_input is not None:
             entry_mode = user_input[CONF_ENTRY_MODE]
+            self._selected_entry_mode = entry_mode
             if entry_mode == ENTRY_MODE_ALL_SYSTEMS:
-                unique_id = f"{self._account_id}:all"
-                await self.async_set_unique_id(unique_id)
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title="Tigo Energy (All Systems)",
-                    data={
-                        CONF_USERNAME: self._username,
-                        CONF_PASSWORD: self._password,
-                        CONF_ACCOUNT_ID: self._account_id,
-                        CONF_ENTRY_MODE: ENTRY_MODE_ALL_SYSTEMS,
-                        CONF_SYSTEM_IDS: [record.system_id for record in self._systems],
-                    },
-                )
+                self._selected_system_id = None
+                return await self.async_step_module_telemetry()
 
             return await self.async_step_system_select()
 
@@ -149,25 +142,9 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             system_id = int(user_input[CONF_SYSTEM_ID])
-            unique_id = f"{self._account_id}:{system_id}"
-            await self.async_set_unique_id(unique_id)
-            self._abort_if_unique_id_configured()
-
-            selected_name = next(
-                (record.name for record in self._systems if record.system_id == system_id),
-                f"System {system_id}",
-            )
-
-            return self.async_create_entry(
-                title=f"Tigo Energy ({selected_name})",
-                data={
-                    CONF_USERNAME: self._username,
-                    CONF_PASSWORD: self._password,
-                    CONF_ACCOUNT_ID: self._account_id,
-                    CONF_ENTRY_MODE: ENTRY_MODE_SINGLE_SYSTEM,
-                    CONF_SYSTEM_ID: system_id,
-                },
-            )
+            self._selected_entry_mode = ENTRY_MODE_SINGLE_SYSTEM
+            self._selected_system_id = system_id
+            return await self.async_step_module_telemetry()
 
         if not self._systems:
             errors["base"] = "no_systems"
@@ -190,6 +167,72 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(step_id="system_select", data_schema=schema, errors=errors)
+
+    async def async_step_module_telemetry(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Choose whether to enable module-level telemetry."""
+        if user_input is not None:
+            self._enable_module_telemetry = bool(user_input[OPT_ENABLE_MODULE_TELEMETRY])
+
+            if self._selected_entry_mode == ENTRY_MODE_ALL_SYSTEMS:
+                unique_id = f"{self._account_id}:all"
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured()
+
+                return self.async_create_entry(
+                    title="Tigo Energy (All Systems)",
+                    data={
+                        CONF_USERNAME: self._username,
+                        CONF_PASSWORD: self._password,
+                        CONF_ACCOUNT_ID: self._account_id,
+                        CONF_ENTRY_MODE: ENTRY_MODE_ALL_SYSTEMS,
+                        CONF_SYSTEM_IDS: [record.system_id for record in self._systems],
+                    },
+                    options={
+                        OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
+                    },
+                )
+
+            if self._selected_system_id is None:
+                return self.async_abort(reason="unknown")
+
+            unique_id = f"{self._account_id}:{self._selected_system_id}"
+            await self.async_set_unique_id(unique_id)
+            self._abort_if_unique_id_configured()
+
+            selected_name = next(
+                (
+                    record.name
+                    for record in self._systems
+                    if record.system_id == self._selected_system_id
+                ),
+                f"System {self._selected_system_id}",
+            )
+
+            return self.async_create_entry(
+                title=f"Tigo Energy ({selected_name})",
+                data={
+                    CONF_USERNAME: self._username,
+                    CONF_PASSWORD: self._password,
+                    CONF_ACCOUNT_ID: self._account_id,
+                    CONF_ENTRY_MODE: ENTRY_MODE_SINGLE_SYSTEM,
+                    CONF_SYSTEM_ID: self._selected_system_id,
+                },
+                options={
+                    OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
+                },
+            )
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    OPT_ENABLE_MODULE_TELEMETRY,
+                    default=self._enable_module_telemetry,
+                ): bool,
+            }
+        )
+        return self.async_show_form(step_id="module_telemetry", data_schema=schema)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
         """Handle initialization of reauthentication flow."""
