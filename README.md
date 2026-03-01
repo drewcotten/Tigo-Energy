@@ -16,11 +16,12 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 
 - Native Home Assistant onboarding from **Settings > Devices & Services**
 - In-flow login with your Tigo account (token obtained internally)
+- Proactive token renewal when login response provides an `expires` timestamp (with 401 retry fallback)
 - System summary sensors (power and energy)
 - Source health sensors (check-in, control state, firmware, gateway count)
 - Optional module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`) with configurable polling
 - Lag-aware backfill strategy to handle delayed minute data from cloud processing
-- Persistent Home Assistant notification on Tigo API connectivity loss (auto-clears on recovery)
+- Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery)
 
 ## Requirements
 
@@ -54,7 +55,7 @@ The integration setup flow is:
    - `all_systems`
 4. If `single_system`, select the system to track.
 5. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
-6. Choose whether Home Assistant should show persistent warning notifications (connection issues and sustained low RSSI). Default is `on`.
+6. Choose whether Home Assistant should show persistent warning notifications (connection issues, sustained low RSSI, and critical telemetry lag). Default is `on`.
 
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
 
@@ -82,6 +83,8 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - YTD energy (`ytd_energy_dc`)
 - Lifetime energy (`lifetime_energy_dc`)
 - Latest stable data timestamp
+- Telemetry lag (minutes)
+- Heartbeat age (minutes)
 
 ### Source health and diagnostics
 
@@ -115,6 +118,16 @@ RSSI module entities expose additional attributes for easier automation/filterin
 - `rssi_alert_threshold`
 - `rssi_status` (`good`, `watch`, `alert`)
 
+### Telemetry Lag Attributes
+
+Telemetry lag and heartbeat age entities expose additional attributes for lag diagnostics:
+
+- `telemetry_lag_status` (`ok`, `warning`, `critical`)
+- `lag_warning_minutes` (default `20`)
+- `lag_critical_minutes` (default `45`)
+- `latest_source_checkin`
+- `latest_non_empty_telemetry_timestamp`
+
 ## Data Freshness and Cloud Lag
 
 Tigo minute data can lag real time because field data and cloud-side processing are not instantaneous.
@@ -124,14 +137,23 @@ This integration uses a lag-aware strategy:
 - Poll summary/source data at configured cadence
 - For module data, query a rolling trailing window
 - Exclude very recent minutes (`recent_cutoff_minutes`) to avoid unstable edge data
+- If a short window returns empty telemetry, retry once with a wider lookback and local filter
+- Drop future CSV bucket rows more than 5 minutes ahead
 - Dedupe repeated/late-arriving points
 - Mark entities unavailable when data age exceeds `stale_threshold_seconds`
+
+Timestamp handling rules:
+
+- ISO timestamps with offsets are normalized to UTC internally.
+- Date-only fields (for example `turn_on_date`) are treated as metadata dates, not freshness instants.
+- CSV `Datetime` values without offsets are interpreted as site-local bucket times (`system timezone -> Home Assistant timezone -> UTC`).
 
 ## Troubleshooting
 
 - **Invalid auth**: verify credentials in Tigo portal and run reauthenticate in integration UI.
 - **Cannot connect to Tigo API**: a Home Assistant persistent notification is shown while connectivity is down; it clears automatically once polling recovers.
 - **Low RSSI alert**: a Home Assistant persistent notification appears when low RSSI persists for the configured debounce window (`rssi_alert_consecutive_polls`) and auto-clears when no modules remain below `rssi_alert_threshold`.
+- **Telemetry lag alert**: a Home Assistant persistent notification appears when heartbeat-vs-telemetry lag is critical (`>=45m`) for 2 consecutive summary polls and clears when critical lag resolves.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` and `recent_cutoff_minutes`.
 - **Too many entities**: disable module telemetry or increase module poll interval.

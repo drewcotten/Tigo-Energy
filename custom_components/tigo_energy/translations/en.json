@@ -29,7 +29,7 @@
         "description": "Enable per-module Pin, Vin, Iin, and RSSI sensors. Large systems can create many entities. You can also choose whether Home Assistant should show persistent warning notifications.",
         "data": {
           "enable_module_telemetry": "Enable module-level telemetry",
-          "enable_persistent_notifications": "Enable persistent notifications for connection and RSSI alerts"
+          "enable_persistent_notifications": "Enable persistent notifications for connection, RSSI, and telemetry lag alerts"
         }
       },
       "reauth_confirm": {
@@ -62,7 +62,7 @@
           "summary_poll_seconds": "Summary poll interval (seconds)",
           "module_poll_seconds": "Module poll interval (seconds)",
           "enable_module_telemetry": "Enable module-level telemetry",
-          "enable_persistent_notifications": "Enable persistent notifications for connection and RSSI alerts",
+          "enable_persistent_notifications": "Enable persistent notifications for connection, RSSI, and telemetry lag alerts",
           "stale_threshold_seconds": "Stale threshold (seconds)",
           "backfill_window_minutes": "Backfill window (minutes)",
           "recent_cutoff_minutes": "Recent cutoff (minutes)",
@@ -92,6 +92,12 @@
       },
       "latest_stable_data_timestamp": {
         "name": "Latest stable data timestamp"
+      },
+      "telemetry_lag_minutes": {
+        "name": "Telemetry lag"
+      },
+      "heartbeat_age_minutes": {
+        "name": "Heartbeat age"
       },
       "source_last_checkin": {
         "name": "Last check-in"

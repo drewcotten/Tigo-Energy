@@ -5,15 +5,26 @@ from __future__ import annotations
 import asyncio
 import base64
 import csv
+import random
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
+from email.utils import parsedate_to_datetime
 from io import StringIO
 from typing import Any
 
 from aiohttp import ClientError, ClientResponse
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import API_BASE_URL
+from .const import (
+    API_BASE_URL,
+    DEFAULT_429_BACKOFF_SECONDS,
+    DEFAULT_TOKEN_REFRESH_LEAD_SECONDS,
+    MAX_429_BACKOFF_SECONDS,
+    MAX_429_RETRIES,
+    MAX_FUTURE_BUCKET_MINUTES,
+)
+
+LOGIN_FALLBACK_STATUSES = frozenset({404, 405, 415})
 
 
 class TigoApiError(Exception):
@@ -42,6 +53,16 @@ class TigoTokenState:
 
     bearer_token: str
     obtained_at: datetime
+    expires_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class ParsedAggregateCsv:
+    """Parsed aggregate/combined CSV payload and cleanup counters."""
+
+    rows_by_module: dict[str, list[tuple[datetime, float]]]
+    future_rows_dropped: int = 0
+    invalid_timestamp_rows: int = 0
 
 
 class TigoApiClient:
@@ -53,12 +74,14 @@ class TigoApiClient:
         credentials: TigoAuthCredentials,
         base_url: str = API_BASE_URL,
         timeout_seconds: int = 30,
+        token_refresh_lead_seconds: int = DEFAULT_TOKEN_REFRESH_LEAD_SECONDS,
     ) -> None:
         self._hass = hass
         self._session = async_get_clientsession(hass)
         self._credentials = credentials
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._token_refresh_lead_seconds = token_refresh_lead_seconds
         self._token_state: TigoTokenState | None = None
         self._account_id: str | None = None
         self._login_lock = asyncio.Lock()
@@ -70,18 +93,23 @@ class TigoApiClient:
 
     async def async_login(self, force: bool = False) -> None:
         """Login and cache bearer token + account id."""
-        if self._token_state is not None and not force:
+        if self._token_state is not None and not force and not self._token_needs_refresh():
             return
 
         async with self._login_lock:
-            if self._token_state is not None and not force:
+            if self._token_state is not None and not force and not self._token_needs_refresh():
                 return
 
             raw = f"{self._credentials.username}:{self._credentials.password}".encode()
             encoded = base64.b64encode(raw).decode()
             headers = {"Authorization": f"Basic {encoded}"}
 
-            response = await self._safe_request("GET", "/users/login", headers=headers)
+            response = await self._async_request_with_429_retry("POST", "/users/login", headers=headers)
+            if response.status in LOGIN_FALLBACK_STATUSES:
+                response = await self._async_request_with_429_retry(
+                    "GET", "/users/login", headers=headers
+                )
+
             if response.status == 401:
                 raise TigoApiAuthError("Invalid username or password")
             if response.status == 429:
@@ -90,16 +118,14 @@ class TigoApiClient:
                 raise TigoApiError(f"Login failed with status {response.status}")
 
             data = await self._read_json(response)
-            user = data.get("user", data)
-            token = user.get("auth") or user.get("token")
-            user_id = user.get("user_id") or user.get("id")
-
+            token, user_id, expires_at = _extract_login_fields(data)
             if not token:
                 raise TigoApiAuthError("Login response did not include auth token")
 
             self._token_state = TigoTokenState(
                 bearer_token=token,
                 obtained_at=datetime.now(UTC),
+                expires_at=expires_at,
             )
             if user_id is not None:
                 self._account_id = str(user_id)
@@ -153,6 +179,24 @@ class TigoApiClient:
         }
         return await self._async_request_text("GET", "/data/aggregate", params=params)
 
+    async def async_get_combined_csv(
+        self,
+        system_id: int,
+        start: datetime,
+        end: datetime,
+        metric: str,
+    ) -> str:
+        """Fetch combined CSV for one metric."""
+        params = {
+            "system_id": system_id,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "level": "minute",
+            "param": metric,
+            "header": "id",
+        }
+        return await self._async_request_text("GET", "/data/combined", params=params)
+
     async def _async_request_json(
         self,
         method: str,
@@ -189,7 +233,12 @@ class TigoApiClient:
         await self.async_login()
         headers = {"Authorization": f"Bearer {self._token_state.bearer_token}"}
 
-        response = await self._safe_request(method, path, headers=headers, params=params)
+        response = await self._async_request_with_429_retry(
+            method,
+            path,
+            headers=headers,
+            params=params,
+        )
 
         if response.status == 401 and retry_auth:
             self._token_state = None
@@ -204,6 +253,41 @@ class TigoApiClient:
             raise TigoApiError(f"Request failed with status {response.status}")
 
         return response
+
+    async def _async_request_with_429_retry(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+    ) -> ClientResponse:
+        """Request with bounded retry handling for 429 responses."""
+        attempt = 0
+        response: ClientResponse | None = None
+        while attempt <= MAX_429_RETRIES:
+            response = await self._safe_request(method, path, headers=headers, params=params)
+            if response.status != 429:
+                return response
+            if attempt == MAX_429_RETRIES:
+                return response
+
+            delay = _retry_delay_seconds(response=response, attempt=attempt)
+            await asyncio.sleep(delay)
+            attempt += 1
+
+        return response
+
+    def _token_needs_refresh(self) -> bool:
+        """Return true when cached token is near known expiration."""
+        if self._token_state is None:
+            return True
+        if self._token_state.expires_at is None:
+            return False
+        refresh_at = self._token_state.expires_at - timedelta(
+            seconds=self._token_refresh_lead_seconds
+        )
+        return datetime.now(UTC) >= refresh_at
 
     async def _safe_request(
         self,
@@ -232,13 +316,19 @@ class TigoApiClient:
             raise TigoApiError("Invalid JSON response from Tigo API") from err
 
 
-def parse_tigo_timestamp(value: Any) -> datetime | None:
+def parse_tigo_timestamp(
+    value: Any,
+    *,
+    naive_tz: tzinfo | None = UTC,
+) -> datetime | None:
     """Parse a timestamp string into timezone-aware UTC datetime when possible."""
+    tz_for_naive = naive_tz or UTC
+
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
+            return value.replace(tzinfo=tz_for_naive).astimezone(UTC)
         return value.astimezone(UTC)
 
     text = str(value).strip()
@@ -250,7 +340,7 @@ def parse_tigo_timestamp(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(iso_text)
         if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
+            return parsed.replace(tzinfo=tz_for_naive).astimezone(UTC)
         return parsed.astimezone(UTC)
     except ValueError:
         pass
@@ -262,12 +352,13 @@ def parse_tigo_timestamp(value: Any) -> datetime | None:
         "%Y-%m-%d %H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S%z",
         "%m/%d/%Y %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
     )
     for fmt in formats:
         try:
             parsed = datetime.strptime(text, fmt)
             if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=UTC)
+                return parsed.replace(tzinfo=tz_for_naive).astimezone(UTC)
             return parsed.astimezone(UTC)
         except ValueError:
             continue
@@ -275,20 +366,34 @@ def parse_tigo_timestamp(value: Any) -> datetime | None:
     return None
 
 
-def parse_tigo_aggregate_csv(csv_text: str) -> dict[str, list[tuple[datetime, float]]]:
-    """Parse aggregate CSV into module_id => [(timestamp, value)]."""
+def parse_tigo_aggregate_csv(
+    csv_text: str,
+    *,
+    naive_tz: tzinfo | None = UTC,
+    now_utc: datetime | None = None,
+    future_skew_minutes: int = MAX_FUTURE_BUCKET_MINUTES,
+) -> ParsedAggregateCsv:
+    """Parse aggregate CSV into module_id => [(timestamp, value)] with cleanup counters."""
     if not csv_text.strip():
-        return {}
+        return ParsedAggregateCsv(rows_by_module={})
+
+    cutoff_now = now_utc or datetime.now(UTC)
+    max_future = cutoff_now + timedelta(minutes=future_skew_minutes)
 
     stream = StringIO(csv_text)
     reader = csv.DictReader(stream)
     rows: dict[str, list[tuple[datetime, float]]] = {}
+    future_rows_dropped = 0
+    invalid_timestamp_rows = 0
 
     for row in reader:
-        # Try common timestamp headers.
         ts_raw = row.get("Datetime") or row.get("DATETIME") or row.get("datetime")
-        timestamp = parse_tigo_timestamp(ts_raw)
+        timestamp = parse_tigo_timestamp(ts_raw, naive_tz=naive_tz)
         if timestamp is None:
+            invalid_timestamp_rows += 1
+            continue
+        if timestamp > max_future:
+            future_rows_dropped += 1
             continue
 
         for column, raw_value in row.items():
@@ -306,4 +411,63 @@ def parse_tigo_aggregate_csv(csv_text: str) -> dict[str, list[tuple[datetime, fl
 
             rows.setdefault(col, []).append((timestamp, numeric))
 
-    return rows
+    return ParsedAggregateCsv(
+        rows_by_module=rows,
+        future_rows_dropped=future_rows_dropped,
+        invalid_timestamp_rows=invalid_timestamp_rows,
+    )
+
+
+def _extract_login_fields(
+    payload: dict[str, Any],
+) -> tuple[str | None, str | int | None, datetime | None]:
+    """Extract token/account/expires from variable login payload shapes."""
+    containers: list[dict[str, Any]] = [payload]
+    user = payload.get("user")
+    if isinstance(user, dict):
+        containers.append(user)
+    data = payload.get("data")
+    if isinstance(data, dict):
+        containers.append(data)
+
+    token: str | None = None
+    user_id: str | int | None = None
+    expires_at: datetime | None = None
+
+    for container in containers:
+        candidate_token = container.get("auth") or container.get("token")
+        if token is None and candidate_token not in (None, ""):
+            token = str(candidate_token)
+
+        candidate_id = (
+            container.get("user_id")
+            or container.get("id")
+            or container.get("account_id")
+        )
+        if user_id is None and candidate_id not in (None, ""):
+            user_id = candidate_id
+
+        candidate_expires = container.get("expires") or container.get("expires_at")
+        if expires_at is None and candidate_expires not in (None, ""):
+            expires_at = parse_tigo_timestamp(candidate_expires)
+
+    return token, user_id, expires_at
+
+
+def _retry_delay_seconds(response: ClientResponse, attempt: int) -> float:
+    """Compute delay for 429 retries using Retry-After when possible."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        retry_after = retry_after.strip()
+        if retry_after.isdigit():
+            return max(0.0, float(retry_after))
+        try:
+            parsed = parsedate_to_datetime(retry_after)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return max(0.0, (parsed.astimezone(UTC) - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError):
+            pass
+
+    base = min(DEFAULT_429_BACKOFF_SECONDS * (2**attempt), MAX_429_BACKOFF_SECONDS)
+    return float(base) + random.uniform(0.0, 1.0)

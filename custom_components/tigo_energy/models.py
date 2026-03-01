@@ -38,6 +38,10 @@ class ModuleSnapshot:
     by_system: dict[int, dict[str, dict[str, ModulePoint]]]
     freshness: FreshnessState
     dedupe_ignored_points: int = 0
+    empty_window_fallback_attempts: int = 0
+    empty_window_fallback_hits: int = 0
+    future_rows_dropped: int = 0
+    invalid_timestamp_rows: int = 0
     low_rssi_module_count: int = 0
     watch_rssi_module_count: int = 0
     worst_rssi: float | None = None
@@ -73,6 +77,11 @@ class SystemSnapshot:
     summary: dict[str, Any]
     sources: list[SourceSnapshot]
     freshest_timestamp: datetime | None
+    latest_source_checkin: datetime | None
+    latest_non_empty_telemetry_timestamp: datetime | None
+    heartbeat_age_seconds: float | None
+    telemetry_lag_seconds: float | None
+    telemetry_lag_status: str | None
 
 
 @dataclass(slots=True)

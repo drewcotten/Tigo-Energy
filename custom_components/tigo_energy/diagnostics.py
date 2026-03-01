@@ -46,6 +46,10 @@ async def async_get_config_entry_diagnostics(
                     "lag_seconds": module_data.freshness.lag_seconds,
                     "is_stale": module_data.freshness.is_stale,
                     "dedupe_ignored_points": module_data.dedupe_ignored_points,
+                    "empty_window_fallback_attempts": module_data.empty_window_fallback_attempts,
+                    "empty_window_fallback_hits": module_data.empty_window_fallback_hits,
+                    "future_rows_dropped": module_data.future_rows_dropped,
+                    "invalid_timestamp_rows": module_data.invalid_timestamp_rows,
                     "low_rssi_module_count": module_data.low_rssi_module_count,
                     "watch_rssi_module_count": module_data.watch_rssi_module_count,
                     "worst_rssi": module_data.worst_rssi,
@@ -53,6 +57,20 @@ async def async_get_config_entry_diagnostics(
                 if module_data
                 else None
             ),
+            "systems": {
+                str(system_id): {
+                    "name": system.name,
+                    "timezone": system.timezone,
+                    "latest_source_checkin": system.latest_source_checkin,
+                    "latest_non_empty_telemetry_timestamp": (
+                        system.latest_non_empty_telemetry_timestamp
+                    ),
+                    "heartbeat_age_seconds": system.heartbeat_age_seconds,
+                    "telemetry_lag_seconds": system.telemetry_lag_seconds,
+                    "telemetry_lag_status": system.telemetry_lag_status,
+                }
+                for system_id, system in summary_data.systems.items()
+            },
             "system_count": len(summary_data.systems),
         }
 

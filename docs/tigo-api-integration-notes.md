@@ -31,6 +31,10 @@ Use this guide when you are building collectors, alerts, automation, or BI inges
 8. API freshness lag is variable; build lag-aware alerts rather than assuming real-time parity.
 9. Short-window history pulls can intermittently return empty history while wider windows return data; treat cause as unresolved and code defensively.
 
+Status in this integration as of the v1.1 hardening pass:
+
+- implemented: login fallback (`POST -> GET`), flexible token extraction, proactive token refresh using `expires`, bounded 429 retry with `Retry-After`, site-local CSV timestamp parsing, short-window fallback, and future-row filtering.
+
 ## Key Behavioral Quirks
 
 ## 1) Authentication Quirk: GET Login Fallback
@@ -43,6 +47,7 @@ Observed on this account:
 Practical implication:
 
 - Always implement fallback `POST` -> `GET` for login.
+- The Home Assistant integration in this repo now does this by default.
 
 ## 2) Token Shape Variability
 
@@ -55,6 +60,7 @@ Observed/handled payload shapes:
 Practical implication:
 
 - Do not hard-code one JSON path for token extraction.
+- The Home Assistant integration in this repo now accepts top-level, `user.*`, and `data.*` token containers.
 
 ## 3) Content-Type Variability (JSON vs CSV)
 
@@ -110,6 +116,7 @@ Practical mitigation:
 
 - if short window returns empty history, retry with a wider window and post-filter locally
 - keep this behavior documented as a known API quirk, not a guaranteed platform rule
+- the Home Assistant integration in this repo now applies this fallback strategy.
 
 ## Observed Lag Differentials (This Environment)
 
@@ -154,6 +161,7 @@ For this repo/site, converted display timezone is:
 Known pitfall already fixed in this repo:
 
 - interpreting CSV bucket timestamps as UTC creates a `-7h`/`-6h` Denver shift.
+- Home Assistant integration behavior: naive CSV timestamps are parsed using `system timezone -> Home Assistant timezone -> UTC`.
 
 ## History Data Quality Rules (Applied by Default Here)
 

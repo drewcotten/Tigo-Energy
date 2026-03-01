@@ -22,6 +22,11 @@ def low_rssi_notification_id(entry_id: str) -> str:
     return f"{DOMAIN}_{entry_id}_low_rssi"
 
 
+def telemetry_lag_notification_id(entry_id: str) -> str:
+    """Return stable telemetry lag notification id for one config entry."""
+    return f"{DOMAIN}_{entry_id}_telemetry_lag"
+
+
 class TigoConnectionNotifier:
     """Tracks connectivity and RSSI alerts via persistent notifications."""
 
@@ -40,6 +45,11 @@ class TigoConnectionNotifier:
     def low_rssi_alert_notification_id(self) -> str:
         """Return low-RSSI alert notification id."""
         return low_rssi_notification_id(self._entry_id)
+
+    @property
+    def telemetry_lag_notification_id(self) -> str:
+        """Return telemetry lag notification id."""
+        return telemetry_lag_notification_id(self._entry_id)
 
     async def async_report_connection_failure(self, source: str) -> None:
         """Mark one source as failed and create notification when first failing."""
@@ -79,6 +89,10 @@ class TigoConnectionNotifier:
             self._hass,
             notification_id=self.low_rssi_alert_notification_id,
         )
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.telemetry_lag_notification_id,
+        )
 
     async def async_report_low_rssi_alert(
         self,
@@ -111,4 +125,37 @@ class TigoConnectionNotifier:
         persistent_notification.async_dismiss(
             self._hass,
             notification_id=self.low_rssi_alert_notification_id,
+        )
+
+    async def async_report_telemetry_lag_critical(
+        self,
+        *,
+        critical_system_count: int,
+        warning_system_count: int,
+        worst_lag_minutes: float | None,
+        warning_minutes: int,
+        critical_minutes: int,
+        consecutive_polls: int,
+    ) -> None:
+        """Create/update persistent alert for critical telemetry lag."""
+        worst_text = "unknown" if worst_lag_minutes is None else f"{worst_lag_minutes:.1f}m"
+        persistent_notification.async_create(
+            self._hass,
+            message=(
+                f"{self._entry_title} has {critical_system_count} system(s) with telemetry lag "
+                f">= {critical_minutes} minutes for {consecutive_polls} consecutive poll(s). "
+                f"{warning_system_count} additional system(s) are in warning range "
+                f"({warning_minutes}-{critical_minutes - 1} minutes). "
+                f"Worst observed lag: {worst_text}. "
+                "This indicates source heartbeat is ahead of available telemetry buckets."
+            ),
+            title=f"{MANUFACTURER}: Telemetry lag alert",
+            notification_id=self.telemetry_lag_notification_id,
+        )
+
+    async def async_clear_telemetry_lag_alert(self) -> None:
+        """Dismiss telemetry lag alert notification."""
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.telemetry_lag_notification_id,
         )

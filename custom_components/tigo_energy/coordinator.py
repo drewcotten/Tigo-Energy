@@ -6,12 +6,14 @@ import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.config_entries import ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
+    ParsedAggregateCsv,
     TigoApiAuthError,
     TigoApiClient,
     TigoApiConnectionError,
@@ -28,7 +30,13 @@ from .const import (
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
+    EMPTY_WINDOW_FALLBACK_MINUTES_MAX,
+    EMPTY_WINDOW_FALLBACK_MINUTES_MIN,
     ENTRY_MODE_ALL_SYSTEMS,
+    LAG_CRITICAL_CONSECUTIVE_POLLS,
+    LAG_CRITICAL_MINUTES,
+    LAG_WARNING_MINUTES,
+    MAX_FUTURE_BUCKET_MINUTES,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
@@ -74,6 +82,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         self._options = options
         self._connection_notifier = connection_notifier
         self.tracked_system_ids: set[int] = set(configured_system_ids)
+        self._telemetry_lag_critical_poll_streak = 0
 
         interval = int(options.get(OPT_SUMMARY_POLL_SECONDS, DEFAULT_SUMMARY_POLL_SECONDS))
         super().__init__(
@@ -86,6 +95,12 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
     async def _async_update_data(self) -> SummarySnapshot:
         stale_threshold = int(
             self._options.get(OPT_STALE_THRESHOLD_SECONDS, DEFAULT_STALE_THRESHOLD_SECONDS)
+        )
+        backfill_minutes = int(
+            self._options.get(OPT_BACKFILL_WINDOW_MINUTES, DEFAULT_BACKFILL_WINDOW_MINUTES)
+        )
+        recent_cutoff_minutes = int(
+            self._options.get(OPT_RECENT_CUTOFF_MINUTES, DEFAULT_RECENT_CUTOFF_MINUTES)
         )
 
         try:
@@ -116,8 +131,14 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             await self._async_report_connection_recovered()
             raise UpdateFailed("No Tigo systems available for this entry")
 
+        window_end = datetime.now(UTC) - timedelta(minutes=recent_cutoff_minutes)
+        window_start = window_end - timedelta(minutes=backfill_minutes)
+
         systems: dict[int, SystemSnapshot] = {}
         global_latest: datetime | None = None
+        critical_system_count = 0
+        warning_system_count = 0
+        worst_critical_lag_minutes: float | None = None
 
         for system_id in sorted(target_system_ids):
             try:
@@ -134,8 +155,24 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 await self._async_report_connection_recovered()
                 raise UpdateFailed(f"Failed to fetch system {system_id}: {err}") from err
 
+            combined = systems_from_api.get(system_id, {})
+            system_timezone = _as_optional_str(details.get("timezone") or combined.get("timezone"))
+            naive_tz = _resolve_naive_timezone(
+                system_timezone=system_timezone,
+                hass_timezone=self.hass.config.time_zone,
+            )
+
+            latest_non_empty_telemetry = await self._async_fetch_combined_latest_timestamp(
+                system_id=system_id,
+                window_start=window_start,
+                window_end=window_end,
+                backfill_minutes=backfill_minutes,
+                naive_tz=naive_tz,
+            )
+
             source_snapshots: list[SourceSnapshot] = []
             system_latest: datetime | None = parse_tigo_timestamp(summary.get("updated_on"))
+            latest_source_checkin: datetime | None = None
 
             for source in sources_raw:
                 source_latest = _extract_source_latest_timestamp(source)
@@ -144,10 +181,19 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                     system_latest = source_latest
                 if last_checkin and (system_latest is None or last_checkin > system_latest):
                     system_latest = last_checkin
+                if last_checkin and (
+                    latest_source_checkin is None or last_checkin > latest_source_checkin
+                ):
+                    latest_source_checkin = last_checkin
 
                 source_snapshots.append(
                     SourceSnapshot(
-                        source_id=str(source.get("source_id") or source.get("id") or source.get("serial") or "unknown"),
+                        source_id=str(
+                            source.get("source_id")
+                            or source.get("id")
+                            or source.get("serial")
+                            or "unknown"
+                        ),
                         name=str(source.get("name") or source.get("serial") or f"Source {system_id}"),
                         serial=_as_optional_str(source.get("serial")),
                         control_state=_as_optional_str(source.get("control_state")),
@@ -159,7 +205,30 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                     )
                 )
 
-            combined = systems_from_api.get(system_id, {})
+            fetched_for_system = datetime.now(UTC)
+            heartbeat_age_seconds = (
+                (fetched_for_system - latest_source_checkin).total_seconds()
+                if latest_source_checkin
+                else None
+            )
+            telemetry_lag_seconds = None
+            if latest_source_checkin and latest_non_empty_telemetry:
+                telemetry_lag_seconds = max(
+                    0.0,
+                    (latest_source_checkin - latest_non_empty_telemetry).total_seconds(),
+                )
+
+            telemetry_lag_status = _telemetry_lag_status(telemetry_lag_seconds)
+            if telemetry_lag_status == "critical":
+                critical_system_count += 1
+                lag_minutes = telemetry_lag_seconds / 60 if telemetry_lag_seconds is not None else None
+                if lag_minutes is not None and (
+                    worst_critical_lag_minutes is None or lag_minutes > worst_critical_lag_minutes
+                ):
+                    worst_critical_lag_minutes = lag_minutes
+            elif telemetry_lag_status == "warning":
+                warning_system_count += 1
+
             name = (
                 _as_optional_str(details.get("name"))
                 or _as_optional_str(combined.get("name"))
@@ -169,7 +238,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             system_snapshot = SystemSnapshot(
                 system_id=system_id,
                 name=name,
-                timezone=_as_optional_str(details.get("timezone") or combined.get("timezone")),
+                timezone=system_timezone,
                 address=_as_optional_str(details.get("address") or combined.get("address")),
                 latitude=_as_optional_float(details.get("lat") or combined.get("lat")),
                 longitude=_as_optional_float(details.get("long") or combined.get("long")),
@@ -182,6 +251,11 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 summary=summary,
                 sources=source_snapshots,
                 freshest_timestamp=system_latest,
+                latest_source_checkin=latest_source_checkin,
+                latest_non_empty_telemetry_timestamp=latest_non_empty_telemetry,
+                heartbeat_age_seconds=heartbeat_age_seconds,
+                telemetry_lag_seconds=telemetry_lag_seconds,
+                telemetry_lag_status=telemetry_lag_status,
             )
 
             systems[system_id] = system_snapshot
@@ -195,6 +269,11 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
 
         self.tracked_system_ids = set(systems)
         await self._async_report_connection_recovered()
+        await self._async_handle_telemetry_lag_notifications(
+            critical_system_count=critical_system_count,
+            warning_system_count=warning_system_count,
+            worst_critical_lag_minutes=worst_critical_lag_minutes,
+        )
 
         account_id = self._client.account_id or "unknown"
         return SummarySnapshot(
@@ -207,6 +286,75 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 is_stale=is_stale,
             ),
         )
+
+    async def _async_fetch_combined_latest_timestamp(
+        self,
+        *,
+        system_id: int,
+        window_start: datetime,
+        window_end: datetime,
+        backfill_minutes: int,
+        naive_tz,
+    ) -> datetime | None:
+        """Fetch latest non-empty combined telemetry timestamp for one system."""
+        primary_csv = await self._client.async_get_combined_csv(
+            system_id=system_id,
+            start=window_start,
+            end=window_end,
+            metric="Pin",
+        )
+        primary = parse_tigo_aggregate_csv(
+            primary_csv,
+            naive_tz=naive_tz,
+            now_utc=datetime.now(UTC),
+            future_skew_minutes=MAX_FUTURE_BUCKET_MINUTES,
+        )
+        if _parsed_has_points(primary):
+            return _latest_timestamp(primary)
+
+        fallback_window_minutes = _fallback_window_minutes(backfill_minutes)
+        fallback_start = window_end - timedelta(minutes=fallback_window_minutes)
+        fallback_csv = await self._client.async_get_combined_csv(
+            system_id=system_id,
+            start=fallback_start,
+            end=window_end,
+            metric="Pin",
+        )
+        fallback = parse_tigo_aggregate_csv(
+            fallback_csv,
+            naive_tz=naive_tz,
+            now_utc=datetime.now(UTC),
+            future_skew_minutes=MAX_FUTURE_BUCKET_MINUTES,
+        )
+        filtered = _filter_parsed_to_window(fallback, window_start=window_start, window_end=window_end)
+        return _latest_timestamp(filtered)
+
+    async def _async_handle_telemetry_lag_notifications(
+        self,
+        *,
+        critical_system_count: int,
+        warning_system_count: int,
+        worst_critical_lag_minutes: float | None,
+    ) -> None:
+        """Create/clear critical telemetry lag notification with debounce."""
+        if self._connection_notifier is None:
+            return
+
+        if critical_system_count > 0:
+            self._telemetry_lag_critical_poll_streak += 1
+            if self._telemetry_lag_critical_poll_streak >= LAG_CRITICAL_CONSECUTIVE_POLLS:
+                await self._connection_notifier.async_report_telemetry_lag_critical(
+                    critical_system_count=critical_system_count,
+                    warning_system_count=warning_system_count,
+                    worst_lag_minutes=worst_critical_lag_minutes,
+                    warning_minutes=LAG_WARNING_MINUTES,
+                    critical_minutes=LAG_CRITICAL_MINUTES,
+                    consecutive_polls=LAG_CRITICAL_CONSECUTIVE_POLLS,
+                )
+            return
+
+        self._telemetry_lag_critical_poll_streak = 0
+        await self._connection_notifier.async_clear_telemetry_lag_alert()
 
     async def _async_report_connection_failure(self) -> None:
         """Show connectivity notification when this coordinator cannot reach API."""
@@ -287,6 +435,10 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                     is_stale=True,
                 ),
                 dedupe_ignored_points=0,
+                empty_window_fallback_attempts=0,
+                empty_window_fallback_hits=0,
+                future_rows_dropped=0,
+                invalid_timestamp_rows=0,
                 low_rssi_module_count=0,
                 watch_rssi_module_count=0,
                 worst_rssi=None,
@@ -297,15 +449,27 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
 
         dedupe_ignored_points = 0
         latest_seen: datetime | None = None
+        fallback_attempts = 0
+        fallback_hits = 0
+        future_rows_dropped = 0
+        invalid_timestamp_rows = 0
 
         for system_id in system_ids:
+            system_timezone = _system_timezone_for_id(self._summary_coordinator.data.systems, system_id)
+            naive_tz = _resolve_naive_timezone(
+                system_timezone=system_timezone,
+                hass_timezone=self.hass.config.time_zone,
+            )
+
             for metric in METRICS:
                 try:
-                    csv_text = await self._client.async_get_aggregate_csv(
+                    parsed, fallback_attempted, fallback_hit = await self._async_fetch_metric_with_fallback(
                         system_id=system_id,
-                        start=window_start,
-                        end=window_end,
                         metric=metric,
+                        window_start=window_start,
+                        window_end=window_end,
+                        backfill_minutes=backfill_minutes,
+                        naive_tz=naive_tz,
                     )
                 except TigoApiAuthError as err:
                     await self._async_report_connection_recovered()
@@ -319,8 +483,14 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                         f"Failed to fetch module metric {metric} for system {system_id}: {err}"
                     ) from err
 
-                parsed = parse_tigo_aggregate_csv(csv_text)
-                for module_id, points in parsed.items():
+                if fallback_attempted:
+                    fallback_attempts += 1
+                if fallback_hit:
+                    fallback_hits += 1
+                future_rows_dropped += parsed.future_rows_dropped
+                invalid_timestamp_rows += parsed.invalid_timestamp_rows
+
+                for module_id, points in parsed.rows_by_module.items():
                     if not points:
                         continue
                     point_ts, point_value = max(points, key=lambda item: item[0])
@@ -383,10 +553,67 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 is_stale=is_stale,
             ),
             dedupe_ignored_points=dedupe_ignored_points,
+            empty_window_fallback_attempts=fallback_attempts,
+            empty_window_fallback_hits=fallback_hits,
+            future_rows_dropped=future_rows_dropped,
+            invalid_timestamp_rows=invalid_timestamp_rows,
             low_rssi_module_count=low_rssi_count,
             watch_rssi_module_count=watch_rssi_count,
             worst_rssi=worst_rssi,
         )
+
+    async def _async_fetch_metric_with_fallback(
+        self,
+        *,
+        system_id: int,
+        metric: str,
+        window_start: datetime,
+        window_end: datetime,
+        backfill_minutes: int,
+        naive_tz,
+    ) -> tuple[ParsedAggregateCsv, bool, bool]:
+        """Fetch one metric and retry once with wider lookback when window is empty."""
+        primary_csv = await self._client.async_get_aggregate_csv(
+            system_id=system_id,
+            start=window_start,
+            end=window_end,
+            metric=metric,
+        )
+        primary = parse_tigo_aggregate_csv(
+            primary_csv,
+            naive_tz=naive_tz,
+            now_utc=datetime.now(UTC),
+            future_skew_minutes=MAX_FUTURE_BUCKET_MINUTES,
+        )
+        if _parsed_has_points(primary):
+            return primary, False, False
+
+        fallback_window_minutes = _fallback_window_minutes(backfill_minutes)
+        fallback_start = window_end - timedelta(minutes=fallback_window_minutes)
+        fallback_csv = await self._client.async_get_aggregate_csv(
+            system_id=system_id,
+            start=fallback_start,
+            end=window_end,
+            metric=metric,
+        )
+        fallback = parse_tigo_aggregate_csv(
+            fallback_csv,
+            naive_tz=naive_tz,
+            now_utc=datetime.now(UTC),
+            future_skew_minutes=MAX_FUTURE_BUCKET_MINUTES,
+        )
+
+        filtered = _filter_parsed_to_window(
+            fallback,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        merged = ParsedAggregateCsv(
+            rows_by_module=filtered.rows_by_module,
+            future_rows_dropped=primary.future_rows_dropped + fallback.future_rows_dropped,
+            invalid_timestamp_rows=primary.invalid_timestamp_rows + fallback.invalid_timestamp_rows,
+        )
+        return merged, True, _parsed_has_points(merged)
 
     async def _async_report_connection_failure(self) -> None:
         """Show connectivity notification when this coordinator cannot reach API."""
@@ -504,3 +731,84 @@ def _compute_rssi_health(
     watch_count = sum(1 for value in rssi_values if alert_threshold <= value < watch_threshold)
     worst_rssi = min(rssi_values)
     return low_count, watch_count, worst_rssi
+
+
+def _telemetry_lag_status(lag_seconds: float | None) -> str | None:
+    """Return telemetry lag status label from fixed thresholds."""
+    if lag_seconds is None:
+        return None
+    lag_minutes = lag_seconds / 60
+    if lag_minutes >= LAG_CRITICAL_MINUTES:
+        return "critical"
+    if lag_minutes >= LAG_WARNING_MINUTES:
+        return "warning"
+    return "ok"
+
+
+def _parsed_has_points(parsed: ParsedAggregateCsv) -> bool:
+    """Return true when parsed rows contain at least one metric value."""
+    return any(points for points in parsed.rows_by_module.values())
+
+
+def _latest_timestamp(parsed: ParsedAggregateCsv) -> datetime | None:
+    """Return latest timestamp across all parsed rows."""
+    latest: datetime | None = None
+    for points in parsed.rows_by_module.values():
+        if not points:
+            continue
+        candidate = max(points, key=lambda item: item[0])[0]
+        if latest is None or candidate > latest:
+            latest = candidate
+    return latest
+
+
+def _filter_parsed_to_window(
+    parsed: ParsedAggregateCsv,
+    *,
+    window_start: datetime,
+    window_end: datetime,
+) -> ParsedAggregateCsv:
+    """Filter parsed data to target window, preserving parser counters."""
+    filtered_rows: dict[str, list[tuple[datetime, float]]] = {}
+    for module_id, points in parsed.rows_by_module.items():
+        kept = [point for point in points if window_start <= point[0] <= window_end]
+        if kept:
+            filtered_rows[module_id] = kept
+    return ParsedAggregateCsv(
+        rows_by_module=filtered_rows,
+        future_rows_dropped=parsed.future_rows_dropped,
+        invalid_timestamp_rows=parsed.invalid_timestamp_rows,
+    )
+
+
+def _fallback_window_minutes(backfill_minutes: int) -> int:
+    """Return widened fallback window duration in minutes."""
+    return min(
+        EMPTY_WINDOW_FALLBACK_MINUTES_MAX,
+        max(EMPTY_WINDOW_FALLBACK_MINUTES_MIN, backfill_minutes * 2),
+    )
+
+
+def _resolve_naive_timezone(system_timezone: str | None, hass_timezone: str | None):
+    """Resolve timezone for naive CSV bucket timestamps."""
+    if system_timezone:
+        try:
+            return ZoneInfo(system_timezone)
+        except ZoneInfoNotFoundError:
+            LOGGER.debug("Invalid system timezone '%s'; falling back", system_timezone)
+
+    if hass_timezone:
+        try:
+            return ZoneInfo(hass_timezone)
+        except ZoneInfoNotFoundError:
+            LOGGER.debug("Invalid Home Assistant timezone '%s'; falling back", hass_timezone)
+
+    return UTC
+
+
+def _system_timezone_for_id(systems: Mapping[int, SystemSnapshot], system_id: int) -> str | None:
+    """Return configured timezone string for one tracked system."""
+    system = systems.get(system_id)
+    if system is None:
+        return None
+    return system.timezone

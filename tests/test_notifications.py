@@ -78,3 +78,29 @@ async def test_low_rssi_notification_create_and_clear(hass):
 
     mock_create.assert_called_once()
     mock_dismiss.assert_called_once()
+
+
+async def test_telemetry_lag_notification_create_and_clear(hass):
+    """Telemetry lag alert should create and clear via dedicated notification id."""
+    notifier = TigoConnectionNotifier(hass, "entry-1", "Tigo Energy")
+
+    with (
+        patch(
+            "custom_components.tigo_energy.notifications.persistent_notification.async_create"
+        ) as mock_create,
+        patch(
+            "custom_components.tigo_energy.notifications.persistent_notification.async_dismiss"
+        ) as mock_dismiss,
+    ):
+        await notifier.async_report_telemetry_lag_critical(
+            critical_system_count=1,
+            warning_system_count=2,
+            worst_lag_minutes=56.2,
+            warning_minutes=20,
+            critical_minutes=45,
+            consecutive_polls=2,
+        )
+        await notifier.async_clear_telemetry_lag_alert()
+
+    mock_create.assert_called_once()
+    mock_dismiss.assert_called_once()

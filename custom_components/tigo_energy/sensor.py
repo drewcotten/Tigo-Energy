@@ -7,7 +7,12 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfElectricCurrent, UnitOfElectricPotential, UnitOfPower
+from homeassistant.const import (
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfPower,
+    UnitOfTime,
+)
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -15,10 +20,17 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ATTR_DATA_LAG_SECONDS,
     ATTR_IS_STALE,
+    ATTR_LAG_CRITICAL_MINUTES,
+    ATTR_LAG_WARNING_MINUTES,
+    ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP,
+    ATTR_LATEST_SOURCE_CHECKIN,
     ATTR_LATEST_STABLE_TIMESTAMP,
+    ATTR_TELEMETRY_LAG_STATUS,
     DEFAULT_RSSI_ALERT_THRESHOLD,
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DOMAIN,
+    LAG_CRITICAL_MINUTES,
+    LAG_WARNING_MINUTES,
     MANUFACTURER,
     OPT_RSSI_ALERT_THRESHOLD,
     OPT_RSSI_WATCH_THRESHOLD,
@@ -101,6 +113,20 @@ SYSTEM_METRICS: tuple[SystemMetricDescription, ...] = (
         key="freshness_timestamp",
         translation_key="latest_stable_data_timestamp",
         device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+    SystemMetricDescription(
+        key="telemetry_lag_minutes",
+        translation_key="telemetry_lag_minutes",
+        unit=UnitOfTime.MINUTES,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="heartbeat_age_minutes",
+        translation_key="heartbeat_age_minutes",
+        unit=UnitOfTime.MINUTES,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
@@ -407,6 +433,10 @@ class TigoSystemSensor(TigoBaseEntity):
 
         if self.entity_description.key == "freshness_timestamp":
             return system.freshest_timestamp
+        if self.entity_description.key == "telemetry_lag_minutes":
+            return _seconds_to_minutes(system.telemetry_lag_seconds)
+        if self.entity_description.key == "heartbeat_age_minutes":
+            return _seconds_to_minutes(system.heartbeat_age_seconds)
 
         value = system.summary.get(self.entity_description.key)
 
@@ -414,6 +444,26 @@ class TigoSystemSensor(TigoBaseEntity):
             return _to_kwh(value)
 
         return value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        if self.entity_description.key not in {"telemetry_lag_minutes", "heartbeat_age_minutes"}:
+            return attrs
+
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        attrs.update(
+            {
+                ATTR_TELEMETRY_LAG_STATUS: system.telemetry_lag_status if system else None,
+                ATTR_LAG_WARNING_MINUTES: LAG_WARNING_MINUTES,
+                ATTR_LAG_CRITICAL_MINUTES: LAG_CRITICAL_MINUTES,
+                ATTR_LATEST_SOURCE_CHECKIN: system.latest_source_checkin if system else None,
+                ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP: (
+                    system.latest_non_empty_telemetry_timestamp if system else None
+                ),
+            }
+        )
+        return attrs
 
 
 class TigoSourceSensor(TigoBaseEntity):
@@ -654,6 +704,13 @@ def _to_kwh(value: Any) -> float | None:
         return round(float(value) / 1000, 3)
     except (TypeError, ValueError):
         return None
+
+
+def _seconds_to_minutes(value: float | None) -> float | None:
+    """Convert seconds to one-decimal minutes for diagnostics display."""
+    if value is None:
+        return None
+    return round(value / 60, 1)
 
 
 def _rssi_values_for_system(runtime: TigoRuntimeData, system_id: int) -> list[float]:
