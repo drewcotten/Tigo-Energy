@@ -1,0 +1,56 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches and test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# Local environment and secrets
+.env
+.env.*
+*.local
+secrets.yaml
+
+# Logs and local runtime files
+*.log
+home-assistant.log
+*.sqlite
+*.sqlite3
+
+# Optional local Home Assistant dev config folders
+config/.storage/
+config/deps/
+config/home-assistant_v2.db
