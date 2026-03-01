@@ -1,6 +1,6 @@
 # Tigo Energy
 
-[![GitHub Release](https://img.shields.io/github/v/release/drewcotten/Tigo-Energy)](https://github.com/drewcotten/Tigo-Energy/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/drewcotten/tigo-energy?include_prereleases)](https://github.com/drewcotten/Tigo-Energy/releases)
 [![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
 [![License](https://img.shields.io/github/license/drewcotten/Tigo-Energy)](LICENSE)
 
