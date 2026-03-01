@@ -65,6 +65,18 @@ class FlowSystemRecord:
     name: str
 
 
+def _int_box_selector(min_value: int, max_value: int) -> selector.NumberSelector:
+    """Build an integer number selector rendered as a keyboard-editable box."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=min_value,
+            max=max_value,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
+
+
 class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Tigo Energy."""
 
@@ -79,6 +91,8 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_system_id: int | None = None
         self._enable_module_telemetry: bool = DEFAULT_ENABLE_MODULE_TELEMETRY
         self._enable_persistent_notifications: bool = DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS
+        self._summary_poll_seconds: int = DEFAULT_SUMMARY_POLL_SECONDS
+        self._module_poll_seconds: int = DEFAULT_MODULE_POLL_SECONDS
         self._reauth_entry: config_entries.ConfigEntry | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -184,12 +198,14 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_module_telemetry(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Choose whether to enable module-level telemetry."""
+        """Choose module telemetry and initial polling rates."""
         if user_input is not None:
             self._enable_module_telemetry = bool(user_input[OPT_ENABLE_MODULE_TELEMETRY])
             self._enable_persistent_notifications = bool(
                 user_input[OPT_ENABLE_PERSISTENT_NOTIFICATIONS]
             )
+            self._summary_poll_seconds = int(user_input[OPT_SUMMARY_POLL_SECONDS])
+            self._module_poll_seconds = int(user_input[OPT_MODULE_POLL_SECONDS])
 
             if self._selected_entry_mode == ENTRY_MODE_ALL_SYSTEMS:
                 unique_id = f"{self._account_id}:all"
@@ -206,6 +222,8 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_SYSTEM_IDS: [record.system_id for record in self._systems],
                     },
                     options={
+                        OPT_SUMMARY_POLL_SECONDS: self._summary_poll_seconds,
+                        OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
                         OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
                         OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
                     },
@@ -237,6 +255,8 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_SYSTEM_ID: self._selected_system_id,
                 },
                 options={
+                    OPT_SUMMARY_POLL_SECONDS: self._summary_poll_seconds,
+                    OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
                     OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
                 },
@@ -244,6 +264,14 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
+                vol.Required(
+                    OPT_SUMMARY_POLL_SECONDS,
+                    default=self._summary_poll_seconds,
+                ): _int_box_selector(MIN_SUMMARY_POLL_SECONDS, MAX_POLL_SECONDS),
+                vol.Required(
+                    OPT_MODULE_POLL_SECONDS,
+                    default=self._module_poll_seconds,
+                ): _int_box_selector(MIN_MODULE_POLL_SECONDS, MAX_POLL_SECONDS),
                 vol.Required(
                     OPT_ENABLE_MODULE_TELEMETRY,
                     default=self._enable_module_telemetry,
@@ -330,12 +358,24 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
         """Manage integration options."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            watch_threshold = int(user_input[OPT_RSSI_WATCH_THRESHOLD])
-            alert_threshold = int(user_input[OPT_RSSI_ALERT_THRESHOLD])
+            clean_input = {
+                **user_input,
+                OPT_SUMMARY_POLL_SECONDS: int(user_input[OPT_SUMMARY_POLL_SECONDS]),
+                OPT_MODULE_POLL_SECONDS: int(user_input[OPT_MODULE_POLL_SECONDS]),
+                OPT_STALE_THRESHOLD_SECONDS: int(user_input[OPT_STALE_THRESHOLD_SECONDS]),
+                OPT_BACKFILL_WINDOW_MINUTES: int(user_input[OPT_BACKFILL_WINDOW_MINUTES]),
+                OPT_RECENT_CUTOFF_MINUTES: int(user_input[OPT_RECENT_CUTOFF_MINUTES]),
+                OPT_RSSI_WATCH_THRESHOLD: int(user_input[OPT_RSSI_WATCH_THRESHOLD]),
+                OPT_RSSI_ALERT_THRESHOLD: int(user_input[OPT_RSSI_ALERT_THRESHOLD]),
+                OPT_RSSI_ALERT_CONSECUTIVE_POLLS: int(user_input[OPT_RSSI_ALERT_CONSECUTIVE_POLLS]),
+            }
+
+            watch_threshold = clean_input[OPT_RSSI_WATCH_THRESHOLD]
+            alert_threshold = clean_input[OPT_RSSI_ALERT_THRESHOLD]
             if watch_threshold <= alert_threshold:
                 errors["base"] = "rssi_threshold_order"
             else:
-                return self.async_create_entry(title="", data=user_input)
+                return self.async_create_entry(title="", data=clean_input)
 
         options = self._config_entry.options
 
@@ -344,11 +384,11 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     OPT_SUMMARY_POLL_SECONDS,
                     default=int(options.get(OPT_SUMMARY_POLL_SECONDS, DEFAULT_SUMMARY_POLL_SECONDS)),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SUMMARY_POLL_SECONDS, max=MAX_POLL_SECONDS)),
+                ): _int_box_selector(MIN_SUMMARY_POLL_SECONDS, MAX_POLL_SECONDS),
                 vol.Required(
                     OPT_MODULE_POLL_SECONDS,
                     default=int(options.get(OPT_MODULE_POLL_SECONDS, DEFAULT_MODULE_POLL_SECONDS)),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_MODULE_POLL_SECONDS, max=MAX_POLL_SECONDS)),
+                ): _int_box_selector(MIN_MODULE_POLL_SECONDS, MAX_POLL_SECONDS),
                 vol.Required(
                     OPT_ENABLE_MODULE_TELEMETRY,
                     default=bool(options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)),
@@ -367,46 +407,31 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                     default=int(
                         options.get(OPT_STALE_THRESHOLD_SECONDS, DEFAULT_STALE_THRESHOLD_SECONDS)
                     ),
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_STALE_THRESHOLD_SECONDS, max=MAX_STALE_THRESHOLD_SECONDS),
-                ),
+                ): _int_box_selector(MIN_STALE_THRESHOLD_SECONDS, MAX_STALE_THRESHOLD_SECONDS),
                 vol.Required(
                     OPT_BACKFILL_WINDOW_MINUTES,
                     default=int(
                         options.get(OPT_BACKFILL_WINDOW_MINUTES, DEFAULT_BACKFILL_WINDOW_MINUTES)
                     ),
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_BACKFILL_WINDOW_MINUTES, max=MAX_BACKFILL_WINDOW_MINUTES),
-                ),
+                ): _int_box_selector(MIN_BACKFILL_WINDOW_MINUTES, MAX_BACKFILL_WINDOW_MINUTES),
                 vol.Required(
                     OPT_RECENT_CUTOFF_MINUTES,
                     default=int(
                         options.get(OPT_RECENT_CUTOFF_MINUTES, DEFAULT_RECENT_CUTOFF_MINUTES)
                     ),
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_RECENT_CUTOFF_MINUTES, max=MAX_RECENT_CUTOFF_MINUTES),
-                ),
+                ): _int_box_selector(MIN_RECENT_CUTOFF_MINUTES, MAX_RECENT_CUTOFF_MINUTES),
                 vol.Required(
                     OPT_RSSI_WATCH_THRESHOLD,
                     default=int(
                         options.get(OPT_RSSI_WATCH_THRESHOLD, DEFAULT_RSSI_WATCH_THRESHOLD)
                     ),
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_RSSI_THRESHOLD, max=MAX_RSSI_THRESHOLD),
-                ),
+                ): _int_box_selector(MIN_RSSI_THRESHOLD, MAX_RSSI_THRESHOLD),
                 vol.Required(
                     OPT_RSSI_ALERT_THRESHOLD,
                     default=int(
                         options.get(OPT_RSSI_ALERT_THRESHOLD, DEFAULT_RSSI_ALERT_THRESHOLD)
                     ),
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_RSSI_THRESHOLD, max=MAX_RSSI_THRESHOLD),
-                ),
+                ): _int_box_selector(MIN_RSSI_THRESHOLD, MAX_RSSI_THRESHOLD),
                 vol.Required(
                     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
                     default=int(
@@ -415,12 +440,9 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                             DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
                         )
                     ),
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(
-                        min=MIN_RSSI_ALERT_CONSECUTIVE_POLLS,
-                        max=MAX_RSSI_ALERT_CONSECUTIVE_POLLS,
-                    ),
+                ): _int_box_selector(
+                    MIN_RSSI_ALERT_CONSECUTIVE_POLLS,
+                    MAX_RSSI_ALERT_CONSECUTIVE_POLLS,
                 ),
             }
         )

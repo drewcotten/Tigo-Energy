@@ -89,8 +89,13 @@ The integration setup flow is:
    - `single_system` (default)
    - `all_systems`
 4. If `single_system`, select the system to track.
-5. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
-6. Choose whether Home Assistant should show persistent warning notifications (connection issues, sustained low RSSI, and critical telemetry lag). Default is `on`.
+5. Set initial polling intervals in seconds:
+   - `summary_poll_seconds` (default `60`)
+   - `module_poll_seconds` (default `300`)
+6. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
+7. Choose whether Home Assistant should show persistent warning notifications (connection issues, sustained low RSSI, and critical telemetry lag). Default is `on`.
+
+Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers and document a per-account cap (`100` requests/minute). Use conservative poll intervals, especially for multi-system accounts.
 
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
 

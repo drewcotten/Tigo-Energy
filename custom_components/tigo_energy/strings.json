@@ -26,8 +26,10 @@
       },
       "module_telemetry": {
         "title": "Module telemetry",
-        "description": "Enable per-module Pin, Vin, Iin, and RSSI sensors. Large systems can create many entities. You can also choose whether Home Assistant should show persistent warning notifications.",
+        "description": "Set initial poll intervals (seconds) and choose module telemetry. Defaults are summary=60 and module=300. Tigo API documents a per-account rate cap of 100 requests/minute, so keep intervals conservative for multi-system accounts.",
         "data": {
+          "summary_poll_seconds": "Summary poll interval (seconds)",
+          "module_poll_seconds": "Module poll interval (seconds)",
           "enable_module_telemetry": "Enable module-level telemetry",
           "enable_persistent_notifications": "Enable persistent notifications for connection, RSSI, and telemetry lag alerts"
         }

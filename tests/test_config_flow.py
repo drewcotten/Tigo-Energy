@@ -23,6 +23,8 @@ from custom_components.tigo_energy.const import (
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_ENABLE_MODULE_TELEMETRY,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+    OPT_MODULE_POLL_SECONDS,
+    OPT_SUMMARY_POLL_SECONDS,
 )
 
 
@@ -68,6 +70,8 @@ async def test_config_flow_single_system_success(hass):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
+                OPT_SUMMARY_POLL_SECONDS: 60,
+                OPT_MODULE_POLL_SECONDS: 300,
                 OPT_ENABLE_MODULE_TELEMETRY: True,
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: True,
             },
@@ -77,6 +81,8 @@ async def test_config_flow_single_system_success(hass):
     assert result["data"][CONF_ENTRY_MODE] == ENTRY_MODE_SINGLE_SYSTEM
     assert result["data"][CONF_SYSTEM_ID] == 1001
     assert result["data"][CONF_ACCOUNT_ID] == "42"
+    assert result["options"][OPT_SUMMARY_POLL_SECONDS] == 60
+    assert result["options"][OPT_MODULE_POLL_SECONDS] == 300
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is True
     assert result["options"][OPT_ENABLE_PERSISTENT_NOTIFICATIONS] is True
 
@@ -113,6 +119,8 @@ async def test_config_flow_all_systems_success(hass):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
+                OPT_SUMMARY_POLL_SECONDS: 75,
+                OPT_MODULE_POLL_SECONDS: 360,
                 OPT_ENABLE_MODULE_TELEMETRY: False,
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: False,
             },
@@ -121,6 +129,8 @@ async def test_config_flow_all_systems_success(hass):
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_ENTRY_MODE] == ENTRY_MODE_ALL_SYSTEMS
     assert sorted(result["data"]["system_ids"]) == [1001, 1002]
+    assert result["options"][OPT_SUMMARY_POLL_SECONDS] == 75
+    assert result["options"][OPT_MODULE_POLL_SECONDS] == 360
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is False
     assert result["options"][OPT_ENABLE_PERSISTENT_NOTIFICATIONS] is False
 
