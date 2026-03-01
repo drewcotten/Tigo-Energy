@@ -11,6 +11,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 ## Documentation
 
 - [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
+- [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
 
 ## Features
 
