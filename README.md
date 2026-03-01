@@ -11,6 +11,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 ## Documentation
 
 - [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
+- [Time-Lag Investigation Report](docs/tigo-integration-time-lag-investigation.md)
 - [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
 
 ## Features
@@ -44,9 +45,18 @@ How this integration handles it:
 - Excludes very recent buckets (`recent_cutoff_minutes`) to avoid unstable edge data.
 - Uses rolling backfill (`backfill_window_minutes`) so late-arriving data is picked up.
 - Retries once with a wider lookback if short-window results are empty.
-- Marks entities unavailable only when data age exceeds `stale_threshold_seconds`.
+- Marks data as stale via attributes/diagnostics when data age exceeds `stale_threshold_seconds`.
 
-In Home Assistant, this means dashboards show the latest stable cloud value rather than true real-time output, short chart gaps can appear and then fill in later as delayed buckets are backfilled, automations should use freshness/lag context (for example `telemetry_lag_status` and stale attributes) instead of assuming current-minute data, and alert thresholds should allow for normal cloud delay before treating missing recent minutes as a fault.
+In Home Assistant, dashboards show the latest stable cloud value rather than true real-time output. Automations should use freshness/lag context (for example `telemetry_lag_status`, `system_data_is_stale`, and `module_data_is_stale`) instead of assuming current-minute data, and alert thresholds should allow for normal cloud delay before treating missing recent minutes as a fault.
+
+## Latest-State vs Historical Backfill
+
+This integration is a latest-state polling integration. It does not currently import delayed minute buckets into Home Assistant as retroactive historical points.
+
+Practical implication:
+
+- Sensor history reflects when Home Assistant received/accepted updated state, not a full reconstruction of every delayed upstream minute bucket.
+- Delayed telemetry still improves current state and lag diagnostics, but older out-of-order buckets may not appear as backfilled chart points.
 
 ## Requirements
 
@@ -92,7 +102,7 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - `module_poll_seconds` (default `300`)
 - `enable_module_telemetry` (default `false`, also selectable during onboarding)
 - `enable_persistent_notifications` (default `true`, also selectable during onboarding)
-- `stale_threshold_seconds` (default `3600`)
+- `stale_threshold_seconds` (default `1800`)
 - `backfill_window_minutes` (default `120`)
 - `recent_cutoff_minutes` (default `20`)
 - `rssi_watch_threshold` (default `120`)
@@ -153,6 +163,15 @@ Telemetry lag and heartbeat age entities expose additional attributes for lag di
 - `latest_source_checkin`
 - `latest_non_empty_telemetry_timestamp`
 
+System and module entities also expose freshness context:
+
+- `system_data_timestamp`
+- `system_data_age_seconds`
+- `system_data_is_stale`
+- `module_data_timestamp` (plus backward-compatible `module_latest_timestamp`)
+- `module_data_age_seconds`
+- `module_data_is_stale`
+
 ## Data Freshness and Cloud Lag
 
 Tigo minute data can lag real time because field data and cloud-side processing are not instantaneous.
@@ -165,7 +184,12 @@ This integration uses a lag-aware strategy:
 - If a short window returns empty telemetry, retry once with a wider lookback and local filter
 - Drop future CSV bucket rows more than 5 minutes ahead
 - Dedupe repeated/late-arriving points
-- Mark entities unavailable when data age exceeds `stale_threshold_seconds`
+- Mark data as stale in entity attributes when data age exceeds `stale_threshold_seconds`
+
+Availability behavior:
+
+- Entities stay available during expected cloud lag when coordinator updates are healthy and entity data exists.
+- Freshness is represented via lag/stale attributes and diagnostic sensors.
 
 Timestamp handling rules:
 

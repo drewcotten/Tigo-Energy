@@ -18,6 +18,7 @@ from .api import (
     TigoApiClient,
     TigoApiConnectionError,
     TigoApiError,
+    TigoApiRateLimitError,
     parse_tigo_aggregate_csv,
     parse_tigo_timestamp,
 )
@@ -105,6 +106,9 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
 
         try:
             list_payload = await self._client.async_list_systems()
+        except TigoApiRateLimitError as err:
+            await self._async_report_connection_recovered()
+            raise UpdateFailed("Tigo API rate limited summary polling", retry_after=err.retry_after) from err
         except TigoApiAuthError as err:
             await self._async_report_connection_recovered()
             raise ConfigEntryAuthFailed from err
@@ -145,6 +149,24 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 details = await self._client.async_get_system(system_id)
                 summary = await self._client.async_get_summary(system_id)
                 sources_raw = await self._client.async_get_sources(system_id)
+                latest_non_empty_telemetry = await self._async_fetch_combined_latest_timestamp(
+                    system_id=system_id,
+                    window_start=window_start,
+                    window_end=window_end,
+                    backfill_minutes=backfill_minutes,
+                    naive_tz=_resolve_naive_timezone(
+                        system_timezone=_as_optional_str(
+                            details.get("timezone") or systems_from_api.get(system_id, {}).get("timezone")
+                        ),
+                        hass_timezone=self.hass.config.time_zone,
+                    ),
+                )
+            except TigoApiRateLimitError as err:
+                await self._async_report_connection_recovered()
+                raise UpdateFailed(
+                    f"Tigo API rate limited while fetching system {system_id}",
+                    retry_after=err.retry_after,
+                ) from err
             except TigoApiAuthError as err:
                 await self._async_report_connection_recovered()
                 raise ConfigEntryAuthFailed from err
@@ -157,18 +179,6 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
 
             combined = systems_from_api.get(system_id, {})
             system_timezone = _as_optional_str(details.get("timezone") or combined.get("timezone"))
-            naive_tz = _resolve_naive_timezone(
-                system_timezone=system_timezone,
-                hass_timezone=self.hass.config.time_zone,
-            )
-
-            latest_non_empty_telemetry = await self._async_fetch_combined_latest_timestamp(
-                system_id=system_id,
-                window_start=window_start,
-                window_end=window_end,
-                backfill_minutes=backfill_minutes,
-                naive_tz=naive_tz,
-            )
 
             source_snapshots: list[SourceSnapshot] = []
             system_latest: datetime | None = parse_tigo_timestamp(summary.get("updated_on"))
@@ -206,6 +216,12 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 )
 
             fetched_for_system = datetime.now(UTC)
+            system_data_age_seconds = (
+                (fetched_for_system - system_latest).total_seconds() if system_latest else None
+            )
+            system_data_is_stale = (
+                system_data_age_seconds is None or system_data_age_seconds > stale_threshold
+            )
             heartbeat_age_seconds = (
                 (fetched_for_system - latest_source_checkin).total_seconds()
                 if latest_source_checkin
@@ -251,6 +267,8 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 summary=summary,
                 sources=source_snapshots,
                 freshest_timestamp=system_latest,
+                system_data_age_seconds=system_data_age_seconds,
+                system_data_is_stale=system_data_is_stale,
                 latest_source_checkin=latest_source_checkin,
                 latest_non_empty_telemetry_timestamp=latest_non_empty_telemetry,
                 heartbeat_age_seconds=heartbeat_age_seconds,
@@ -265,7 +283,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
 
         fetched_at = datetime.now(UTC)
         lag_seconds = (fetched_at - global_latest).total_seconds() if global_latest else None
-        is_stale = bool(lag_seconds and lag_seconds > stale_threshold)
+        is_stale = lag_seconds is None or lag_seconds > stale_threshold
 
         self.tracked_system_ids = set(systems)
         await self._async_report_connection_recovered()
@@ -471,6 +489,12 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                         backfill_minutes=backfill_minutes,
                         naive_tz=naive_tz,
                     )
+                except TigoApiRateLimitError as err:
+                    await self._async_report_connection_recovered()
+                    raise UpdateFailed(
+                        f"Tigo API rate limited while fetching module metric {metric} for system {system_id}",
+                        retry_after=err.retry_after,
+                    ) from err
                 except TigoApiAuthError as err:
                     await self._async_report_connection_recovered()
                     raise ConfigEntryAuthFailed from err
@@ -529,7 +553,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
 
         fetched_at = datetime.now(UTC)
         lag_seconds = (fetched_at - latest_seen).total_seconds() if latest_seen else None
-        is_stale = bool(lag_seconds and lag_seconds > stale_threshold)
+        is_stale = lag_seconds is None or lag_seconds > stale_threshold
         await self._async_report_connection_recovered()
         if low_rssi_count > 0 and self._low_rssi_poll_streak >= rssi_alert_consecutive_polls:
             await self._async_report_low_rssi_alert(

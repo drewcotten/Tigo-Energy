@@ -7,11 +7,13 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
+import pytest
 from aioresponses import aioresponses
 
 from custom_components.tigo_energy.api import (
     TigoApiAuthError,
     TigoApiClient,
+    TigoApiRateLimitError,
     TigoAuthCredentials,
     parse_tigo_timestamp,
 )
@@ -151,6 +153,32 @@ async def test_request_retries_on_429_with_retry_after(hass):
 
     assert systems == [{"system_id": 1001}]
     mock_sleep.assert_awaited()
+
+
+async def test_request_raises_rate_limit_error_after_max_retries(hass):
+    """Exhausted 429 retries should raise a dedicated rate-limit exception."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with (
+        aioresponses() as mocked,
+        patch("custom_components.tigo_energy.api.asyncio.sleep", AsyncMock()),
+    ):
+        mocked.post(
+            f"{BASE}/users/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        for _ in range(4):
+            mocked.get(
+                re.compile(rf"{BASE}/systems.*"),
+                status=429,
+                headers={"Retry-After": "2"},
+            )
+
+        with pytest.raises(TigoApiRateLimitError) as err:
+            await client.async_list_systems()
+
+    assert err.value.retry_after == 2.0
 
 
 async def test_proactive_refresh_uses_expires(hass):

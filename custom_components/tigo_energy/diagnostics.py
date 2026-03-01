@@ -61,6 +61,9 @@ async def async_get_config_entry_diagnostics(
                 str(system_id): {
                     "name": system.name,
                     "timezone": system.timezone,
+                    "system_data_timestamp": system.freshest_timestamp,
+                    "system_data_age_seconds": system.system_data_age_seconds,
+                    "system_data_is_stale": system.system_data_is_stale,
                     "latest_source_checkin": system.latest_source_checkin,
                     "latest_non_empty_telemetry_timestamp": (
                         system.latest_non_empty_telemetry_timestamp

@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
 
-from custom_components.tigo_energy.api import TigoApiConnectionError
+from homeassistant.helpers.update_coordinator import UpdateFailed
+
+from custom_components.tigo_energy.api import TigoApiConnectionError, TigoApiRateLimitError
 from custom_components.tigo_energy.const import (
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -78,6 +80,7 @@ async def test_summary_coordinator_fetches_system_and_sources(hass):
     assert system.latest_non_empty_telemetry_timestamp is not None
     assert system.latest_source_checkin is not None
     assert system.telemetry_lag_status == "ok"
+    assert system.system_data_is_stale is False
 
 
 async def test_summary_coordinator_critical_lag_notifies_after_debounce(hass):
@@ -239,6 +242,30 @@ async def test_summary_coordinator_connection_failure_notifies(hass):
 
     assert coordinator.last_update_success is False
     notifier.async_report_connection_failure.assert_awaited_once_with(CONNECTION_SOURCE_SUMMARY)
+
+
+async def test_summary_coordinator_rate_limit_sets_retry_after(hass):
+    """Rate-limit failures should propagate retry-after to UpdateFailed."""
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.side_effect = TigoApiRateLimitError(
+        "rate limited",
+        retry_after=12.5,
+    )
+
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={},
+    )
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is False
+    assert isinstance(coordinator.last_exception, UpdateFailed)
+    assert coordinator.last_exception.retry_after == 12.5
 
 
 async def test_module_coordinator_low_rssi_alert_debounced(hass):

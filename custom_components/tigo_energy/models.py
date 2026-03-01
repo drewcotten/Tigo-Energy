@@ -77,6 +77,8 @@ class SystemSnapshot:
     summary: dict[str, Any]
     sources: list[SourceSnapshot]
     freshest_timestamp: datetime | None
+    system_data_age_seconds: float | None
+    system_data_is_stale: bool
     latest_source_checkin: datetime | None
     latest_non_empty_telemetry_timestamp: datetime | None
     heartbeat_age_seconds: float | None

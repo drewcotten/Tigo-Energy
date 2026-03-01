@@ -25,15 +25,23 @@ from .const import (
     ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP,
     ATTR_LATEST_SOURCE_CHECKIN,
     ATTR_LATEST_STABLE_TIMESTAMP,
+    ATTR_MODULE_DATA_AGE_SECONDS,
+    ATTR_MODULE_DATA_IS_STALE,
+    ATTR_MODULE_DATA_TIMESTAMP,
+    ATTR_SYSTEM_DATA_AGE_SECONDS,
+    ATTR_SYSTEM_DATA_IS_STALE,
+    ATTR_SYSTEM_DATA_TIMESTAMP,
     ATTR_TELEMETRY_LAG_STATUS,
     DEFAULT_RSSI_ALERT_THRESHOLD,
     DEFAULT_RSSI_WATCH_THRESHOLD,
+    DEFAULT_STALE_THRESHOLD_SECONDS,
     DOMAIN,
     LAG_CRITICAL_MINUTES,
     LAG_WARNING_MINUTES,
     MANUFACTURER,
     OPT_RSSI_ALERT_THRESHOLD,
     OPT_RSSI_WATCH_THRESHOLD,
+    OPT_STALE_THRESHOLD_SECONDS,
 )
 from .coordinator import METRICS
 from .models import (
@@ -372,15 +380,19 @@ class TigoBaseEntity(CoordinatorEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and not self._runtime.summary_coordinator.data.freshness.is_stale
+        return super().available
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         freshness = self._runtime.summary_coordinator.data.freshness
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
         return {
             ATTR_LATEST_STABLE_TIMESTAMP: freshness.latest_stable_timestamp,
             ATTR_IS_STALE: freshness.is_stale,
             ATTR_DATA_LAG_SECONDS: freshness.lag_seconds,
+            ATTR_SYSTEM_DATA_TIMESTAMP: system.freshest_timestamp if system else None,
+            ATTR_SYSTEM_DATA_AGE_SECONDS: system.system_data_age_seconds if system else None,
+            ATTR_SYSTEM_DATA_IS_STALE: system.system_data_is_stale if system else True,
         }
 
     @property
@@ -424,6 +436,12 @@ class TigoSystemSensor(TigoBaseEntity):
         self._attr_native_unit_of_measurement = description.unit
         self._attr_state_class = description.state_class
         self._attr_entity_category = description.entity_category
+
+    @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        return self._runtime.summary_coordinator.data.systems.get(self._system_id) is not None
 
     @property
     def native_value(self) -> Any:
@@ -500,6 +518,15 @@ class TigoSourceSensor(TigoBaseEntity):
         self._attr_entity_category = description.entity_category
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        return (
+            _find_source(self._runtime.summary_coordinator.data, self._system_id, self._source_id)
+            is not None
+        )
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, f"source_{self._system_id}_{self._source_id}")},
@@ -563,8 +590,6 @@ class TigoModuleSensor(TigoBaseEntity):
             return False
         if not super().available:
             return False
-        if self._runtime.module_coordinator.data.freshness.is_stale:
-            return False
 
         return self._point is not None
 
@@ -577,15 +602,28 @@ class TigoModuleSensor(TigoBaseEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs = super().extra_state_attributes
         point = self._point
-        module_freshness = self._runtime.module_coordinator.data.freshness if self._runtime.module_coordinator else None
+        module_freshness = (
+            self._runtime.module_coordinator.data.freshness if self._runtime.module_coordinator else None
+        )
         rssi_watch_threshold, rssi_alert_threshold = _rssi_thresholds_from_entry(self._entry)
+        stale_threshold_seconds = _stale_threshold_seconds_from_entry(self._entry)
+        module_data_age_seconds = (
+            max(0.0, (module_freshness.fetched_at - point.timestamp).total_seconds())
+            if module_freshness and point
+            else None
+        )
+        module_data_is_stale = (
+            module_data_age_seconds is None or module_data_age_seconds > stale_threshold_seconds
+        )
         attrs.update(
             {
                 "module_id": self._module_id,
                 "metric": self._metric,
+                ATTR_MODULE_DATA_TIMESTAMP: point.timestamp if point else None,
                 "module_latest_timestamp": point.timestamp if point else None,
+                ATTR_MODULE_DATA_AGE_SECONDS: module_data_age_seconds,
                 "module_data_lag_seconds": module_freshness.lag_seconds if module_freshness else None,
-                "module_data_is_stale": module_freshness.is_stale if module_freshness else True,
+                ATTR_MODULE_DATA_IS_STALE: module_data_is_stale,
             }
         )
         if self._metric == "RSSI":
@@ -646,9 +684,7 @@ class TigoRssiAggregateSensor(TigoBaseEntity):
     def available(self) -> bool:
         if self._runtime.module_coordinator is None:
             return False
-        if not super().available:
-            return False
-        return not self._runtime.module_coordinator.data.freshness.is_stale
+        return super().available
 
     @property
     def native_value(self) -> Any:
@@ -748,3 +784,8 @@ def _rssi_status_label(
     if value < watch_threshold:
         return "watch"
     return "good"
+
+
+def _stale_threshold_seconds_from_entry(entry: ConfigEntry) -> int:
+    """Return configured stale threshold in seconds."""
+    return int(entry.options.get(OPT_STALE_THRESHOLD_SECONDS, DEFAULT_STALE_THRESHOLD_SECONDS))

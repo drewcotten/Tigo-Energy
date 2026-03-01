@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
 from .api import TigoApiAuthError, TigoApiClient, TigoApiConnectionError, TigoAuthCredentials
 from .const import (
@@ -70,7 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
     except TigoApiAuthError as err:
         if connection_notifier is not None:
             await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
-        raise ConfigEntryNotReady("Unable to authenticate with stored credentials") from err
+        raise ConfigEntryAuthFailed("Unable to authenticate with stored credentials") from err
     except TigoApiConnectionError as err:
         if connection_notifier is not None:
             await connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_SETUP)

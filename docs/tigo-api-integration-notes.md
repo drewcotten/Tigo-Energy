@@ -34,6 +34,7 @@ Use this guide when you are building collectors, alerts, automation, or BI inges
 Status in this integration as of the v1.1 hardening pass:
 
 - implemented: login fallback (`POST -> GET`), flexible token extraction, proactive token refresh using `expires`, bounded 429 retry with `Retry-After`, site-local CSV timestamp parsing, short-window fallback, and future-row filtering.
+- implemented: stale/freshness is surfaced as diagnostics attributes (`system_data_*`, `module_data_*`) while expected cloud lag keeps entities available when coordinator updates are healthy.
 
 ## Key Behavioral Quirks
 

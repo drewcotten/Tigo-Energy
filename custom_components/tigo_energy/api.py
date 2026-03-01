@@ -39,6 +39,14 @@ class TigoApiAuthError(TigoApiError):
     """Raised for invalid auth or expired credentials."""
 
 
+class TigoApiRateLimitError(TigoApiError):
+    """Raised when API rate-limit retries are exhausted."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 @dataclass(slots=True)
 class TigoAuthCredentials:
     """Credential payload for login."""
@@ -112,8 +120,6 @@ class TigoApiClient:
 
             if response.status == 401:
                 raise TigoApiAuthError("Invalid username or password")
-            if response.status == 429:
-                raise TigoApiError("Tigo API rate limited login request")
             if response.status >= 400:
                 raise TigoApiError(f"Login failed with status {response.status}")
 
@@ -248,7 +254,7 @@ class TigoApiClient:
         if response.status == 401:
             raise TigoApiAuthError("Authentication failed after token refresh")
         if response.status == 429:
-            raise TigoApiError("Tigo API rate limit exceeded")
+            raise TigoApiRateLimitError("Tigo API rate limit exceeded")
         if response.status >= 400:
             raise TigoApiError(f"Request failed with status {response.status}")
 
@@ -264,19 +270,21 @@ class TigoApiClient:
     ) -> ClientResponse:
         """Request with bounded retry handling for 429 responses."""
         attempt = 0
-        response: ClientResponse | None = None
         while attempt <= MAX_429_RETRIES:
             response = await self._safe_request(method, path, headers=headers, params=params)
             if response.status != 429:
                 return response
-            if attempt == MAX_429_RETRIES:
-                return response
 
             delay = _retry_delay_seconds(response=response, attempt=attempt)
+            if attempt == MAX_429_RETRIES:
+                raise TigoApiRateLimitError(
+                    "Tigo API rate limit exceeded after retries",
+                    retry_after=delay,
+                )
             await asyncio.sleep(delay)
             attempt += 1
 
-        return response
+        raise TigoApiRateLimitError("Tigo API rate limit exceeded")
 
     def _token_needs_refresh(self) -> bool:
         """Return true when cached token is near known expiration."""
