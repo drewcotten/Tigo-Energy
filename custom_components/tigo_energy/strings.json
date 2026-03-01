@@ -26,9 +26,10 @@
       },
       "module_telemetry": {
         "title": "Module telemetry",
-        "description": "Enable per-module Pin, Vin, Iin, and RSSI sensors. Large systems can create many entities.",
+        "description": "Enable per-module Pin, Vin, Iin, and RSSI sensors. Large systems can create many entities. You can also choose whether Home Assistant should show persistent warning notifications.",
         "data": {
-          "enable_module_telemetry": "Enable module-level telemetry"
+          "enable_module_telemetry": "Enable module-level telemetry",
+          "enable_persistent_notifications": "Enable persistent notifications for connection and RSSI alerts"
         }
       },
       "reauth_confirm": {
@@ -61,6 +62,7 @@
           "summary_poll_seconds": "Summary poll interval (seconds)",
           "module_poll_seconds": "Module poll interval (seconds)",
           "enable_module_telemetry": "Enable module-level telemetry",
+          "enable_persistent_notifications": "Enable persistent notifications for connection and RSSI alerts",
           "stale_threshold_seconds": "Stale threshold (seconds)",
           "backfill_window_minutes": "Backfill window (minutes)",
           "recent_cutoff_minutes": "Recent cutoff (minutes)",

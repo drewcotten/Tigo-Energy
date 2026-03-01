@@ -8,6 +8,10 @@ Home Assistant custom integration for **Tigo Energy Premium cloud API** telemetr
 
 This integration supports native UI onboarding (Config Flow), in-flow authentication, and lag-aware telemetry handling for Tigo cloud data.
 
+## Documentation
+
+- [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
+
 ## Features
 
 - Native Home Assistant onboarding from **Settings > Devices & Services**
@@ -50,6 +54,7 @@ The integration setup flow is:
    - `all_systems`
 4. If `single_system`, select the system to track.
 5. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
+6. Choose whether Home Assistant should show persistent warning notifications (connection issues and sustained low RSSI). Default is `on`.
 
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
 
@@ -60,6 +65,7 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - `summary_poll_seconds` (default `60`)
 - `module_poll_seconds` (default `300`)
 - `enable_module_telemetry` (default `false`, also selectable during onboarding)
+- `enable_persistent_notifications` (default `true`, also selectable during onboarding)
 - `stale_threshold_seconds` (default `3600`)
 - `backfill_window_minutes` (default `120`)
 - `recent_cutoff_minutes` (default `20`)
@@ -99,6 +105,15 @@ When module telemetry is enabled, system-level RSSI aggregate sensors are also c
 - Low RSSI module count (`< rssi_alert_threshold`)
 - Watch RSSI module count (`>= rssi_alert_threshold` and `< rssi_watch_threshold`)
 - Worst module RSSI
+
+### RSSI Attributes
+
+RSSI module entities expose additional attributes for easier automation/filtering:
+
+- `rssi_scale` (`0-255`)
+- `rssi_watch_threshold`
+- `rssi_alert_threshold`
+- `rssi_status` (`good`, `watch`, `alert`)
 
 ## Data Freshness and Cloud Lag
 

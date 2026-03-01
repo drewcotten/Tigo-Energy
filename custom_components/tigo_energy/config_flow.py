@@ -20,6 +20,7 @@ from .const import (
     CONF_SYSTEM_IDS,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
+    DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_MODULE_POLL_SECONDS,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -45,6 +46,7 @@ from .const import (
     MIN_SUMMARY_POLL_SECONDS,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_MODULE_TELEMETRY,
+    OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -76,6 +78,7 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_entry_mode: str = ENTRY_MODE_SINGLE_SYSTEM
         self._selected_system_id: int | None = None
         self._enable_module_telemetry: bool = DEFAULT_ENABLE_MODULE_TELEMETRY
+        self._enable_persistent_notifications: bool = DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS
         self._reauth_entry: config_entries.ConfigEntry | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -184,6 +187,9 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Choose whether to enable module-level telemetry."""
         if user_input is not None:
             self._enable_module_telemetry = bool(user_input[OPT_ENABLE_MODULE_TELEMETRY])
+            self._enable_persistent_notifications = bool(
+                user_input[OPT_ENABLE_PERSISTENT_NOTIFICATIONS]
+            )
 
             if self._selected_entry_mode == ENTRY_MODE_ALL_SYSTEMS:
                 unique_id = f"{self._account_id}:all"
@@ -201,6 +207,7 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                     options={
                         OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
+                        OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
                     },
                 )
 
@@ -231,6 +238,7 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 options={
                     OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
+                    OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
                 },
             )
 
@@ -239,6 +247,10 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     OPT_ENABLE_MODULE_TELEMETRY,
                     default=self._enable_module_telemetry,
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                    default=self._enable_persistent_notifications,
                 ): bool,
             }
         )
@@ -340,6 +352,15 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     OPT_ENABLE_MODULE_TELEMETRY,
                     default=bool(options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)),
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                    default=bool(
+                        options.get(
+                            OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                            DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                        )
+                    ),
                 ): bool,
                 vol.Required(
                     OPT_STALE_THRESHOLD_SECONDS,

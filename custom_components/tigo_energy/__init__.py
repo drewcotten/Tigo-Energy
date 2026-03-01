@@ -16,6 +16,7 @@ from .const import (
     CONF_SYSTEM_IDS,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
+    DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_MODULE_POLL_SECONDS,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -26,6 +27,7 @@ from .const import (
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_MODULE_TELEMETRY,
+    OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -51,7 +53,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
     """Set up Tigo Energy from a config entry."""
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
-    connection_notifier = TigoConnectionNotifier(hass, entry.entry_id, entry.title)
+    options = _merged_options(entry)
+    connection_notifier = (
+        TigoConnectionNotifier(hass, entry.entry_id, entry.title)
+        if options[OPT_ENABLE_PERSISTENT_NOTIFICATIONS]
+        else None
+    )
 
     client = TigoApiClient(
         hass=hass,
@@ -61,15 +68,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
     try:
         await client.async_login()
     except TigoApiAuthError as err:
-        await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
+        if connection_notifier is not None:
+            await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
         raise ConfigEntryNotReady("Unable to authenticate with stored credentials") from err
     except TigoApiConnectionError as err:
-        await connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_SETUP)
+        if connection_notifier is not None:
+            await connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_SETUP)
         raise ConfigEntryNotReady("Unable to connect to Tigo API") from err
     else:
-        await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
-
-    options = _merged_options(entry)
+        if connection_notifier is not None:
+            await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
     entry_mode = entry.data.get(CONF_ENTRY_MODE, ENTRY_MODE_SINGLE_SYSTEM)
 
     configured_system_ids: set[int] = set()
@@ -105,7 +113,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         )
         await module_coordinator.async_config_entry_first_refresh()
 
-    await connection_notifier.async_clear()
+    if connection_notifier is not None:
+        await connection_notifier.async_clear()
 
     runtime_data = TigoRuntimeData(
         account_id=summary_coordinator.data.account_id,
@@ -150,6 +159,12 @@ def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
         ),
         OPT_ENABLE_MODULE_TELEMETRY: bool(
             entry.options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)
+        ),
+        OPT_ENABLE_PERSISTENT_NOTIFICATIONS: bool(
+            entry.options.get(
+                OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+            )
         ),
         OPT_STALE_THRESHOLD_SECONDS: int(
             entry.options.get(OPT_STALE_THRESHOLD_SECONDS, DEFAULT_STALE_THRESHOLD_SECONDS)
