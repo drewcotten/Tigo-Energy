@@ -245,12 +245,16 @@ class TigoEntityManager:
     def collect_initial_entities(self) -> list[SensorEntity]:
         """Collect initial entities from current coordinator data."""
         entities: list[SensorEntity] = []
-        entities.extend(self._new_system_entities(self._runtime.summary_coordinator.data))
-        entities.extend(self._new_source_entities(self._runtime.summary_coordinator.data))
+        summary_data = self._runtime.summary_coordinator.data
+        module_data = self._runtime.module_coordinator.data if self._runtime.module_coordinator else None
+        system_ids = self._candidate_system_ids(summary_data, module_data)
 
-        if self._runtime.module_coordinator is not None:
-            entities.extend(self._new_module_entities(self._runtime.module_coordinator.data))
-            entities.extend(self._new_rssi_aggregate_entities(self._runtime.summary_coordinator.data))
+        entities.extend(self._new_system_entities(system_ids))
+        entities.extend(self._new_source_entities(summary_data))
+
+        if module_data is not None:
+            entities.extend(self._new_module_entities(module_data))
+            entities.extend(self._new_rssi_aggregate_entities(system_ids))
 
         return entities
 
@@ -258,11 +262,14 @@ class TigoEntityManager:
         """Add entities for newly discovered systems/sources."""
         new_entities: list[SensorEntity] = []
         data = self._runtime.summary_coordinator.data
-        self._runtime.tracked_system_ids = set(data.systems)
-        new_entities.extend(self._new_system_entities(data))
+        self._runtime.tracked_system_ids = set(data.systems) | self._module_system_ids()
+        module_data = self._runtime.module_coordinator.data if self._runtime.module_coordinator else None
+        system_ids = self._candidate_system_ids(data, module_data)
+
+        new_entities.extend(self._new_system_entities(system_ids))
         new_entities.extend(self._new_source_entities(data))
         if self._runtime.module_coordinator is not None:
-            new_entities.extend(self._new_rssi_aggregate_entities(data))
+            new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
             self._async_add_entities(new_entities)
 
@@ -271,14 +278,17 @@ class TigoEntityManager:
         if self._runtime.module_coordinator is None:
             return
 
-        new_entities = self._new_module_entities(self._runtime.module_coordinator.data)
-        new_entities.extend(self._new_rssi_aggregate_entities(self._runtime.summary_coordinator.data))
+        module_data = self._runtime.module_coordinator.data
+        system_ids = self._candidate_system_ids(self._runtime.summary_coordinator.data, module_data)
+        new_entities = self._new_system_entities(system_ids)
+        new_entities.extend(self._new_module_entities(module_data))
+        new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
             self._async_add_entities(new_entities)
 
-    def _new_system_entities(self, data: SummarySnapshot) -> list[SensorEntity]:
+    def _new_system_entities(self, system_ids: set[int]) -> list[SensorEntity]:
         new_entities: list[SensorEntity] = []
-        for system_id in sorted(data.systems):
+        for system_id in sorted(system_ids):
             for description in SYSTEM_METRICS:
                 key = (system_id, description.key)
                 if key in self._known_system_metric_keys:
@@ -337,13 +347,13 @@ class TigoEntityManager:
                     )
         return new_entities
 
-    def _new_rssi_aggregate_entities(self, data: SummarySnapshot) -> list[SensorEntity]:
+    def _new_rssi_aggregate_entities(self, system_ids: set[int]) -> list[SensorEntity]:
         """Create RSSI aggregate entities for systems."""
         if self._runtime.module_coordinator is None:
             return []
 
         new_entities: list[SensorEntity] = []
-        for system_id in sorted(data.systems):
+        for system_id in sorted(system_ids):
             for description in RSSI_AGGREGATE_METRICS:
                 key = (system_id, description.key)
                 if key in self._known_rssi_aggregate_keys:
@@ -358,6 +368,25 @@ class TigoEntityManager:
                     )
                 )
         return new_entities
+
+    def _candidate_system_ids(
+        self,
+        summary_data: SummarySnapshot | None,
+        module_data: ModuleSnapshot | None,
+    ) -> set[int]:
+        """Return all known system IDs from runtime, summary, and module snapshots."""
+        system_ids = set(self._runtime.tracked_system_ids)
+        if summary_data is not None:
+            system_ids.update(summary_data.systems)
+        if module_data is not None:
+            system_ids.update(module_data.by_system)
+        return system_ids
+
+    def _module_system_ids(self) -> set[int]:
+        """Return currently known module system IDs, if module polling is enabled."""
+        if self._runtime.module_coordinator is None:
+            return set()
+        return set(self._runtime.module_coordinator.data.by_system)
 
 
 class TigoBaseEntity(CoordinatorEntity, SensorEntity):

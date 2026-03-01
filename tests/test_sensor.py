@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -17,7 +18,12 @@ from custom_components.tigo_energy.models import (
     SystemSnapshot,
     TigoRuntimeData,
 )
-from custom_components.tigo_energy.sensor import SYSTEM_METRICS, TigoModuleSensor, TigoSystemSensor
+from custom_components.tigo_energy.sensor import (
+    SYSTEM_METRICS,
+    TigoEntityManager,
+    TigoModuleSensor,
+    TigoSystemSensor,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -336,3 +342,74 @@ async def test_module_sensor_available_with_stale_point(hass):
     assert attrs["module_latest_timestamp"] == stale_point
     assert attrs["module_data_is_stale"] is True
     assert attrs["module_data_age_seconds"] > 0
+
+
+async def test_module_discovery_still_creates_system_entities(hass):
+    """System sensors should still be created from module snapshot system ids."""
+    now = datetime.now(UTC)
+
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={},
+        freshness=FreshnessState(
+            latest_stable_timestamp=None,
+            fetched_at=now,
+            lag_seconds=None,
+            is_stale=True,
+        ),
+    )
+    point = ModulePoint(
+        system_id=1001,
+        module_id="A1",
+        metric="Pin",
+        value=321.0,
+        timestamp=now,
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={(1001, "A1", "Pin"): point},
+        by_system={1001: {"A1": {"Pin": point}}},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="all_systems",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids=set(),
+    )
+
+    manager = TigoEntityManager(
+        entry=entry,
+        runtime=runtime,
+        async_add_entities=Mock(),
+    )
+    entities = manager.collect_initial_entities()
+
+    assert any(isinstance(entity, TigoSystemSensor) for entity in entities)

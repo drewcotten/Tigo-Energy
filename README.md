@@ -128,6 +128,8 @@ These are the exact Home Assistant sensor names created by this integration.
 - Telemetry lag
 - Heartbeat age
 
+System entities/devices are created per tracked system in both `single_system` and `all_systems` entry modes, including cases where module telemetry is discovered before full summary payloads are available.
+
 ### Source device (`<Source Name>`)
 
 - Last check-in
