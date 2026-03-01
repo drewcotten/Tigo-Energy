@@ -1,0 +1,110 @@
+{
+  "title": "Tigo Energy",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Tigo Energy",
+        "description": "Enter your Tigo Energy account credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "scope": {
+        "title": "Choose scope",
+        "description": "Track one system or all systems on this account.",
+        "data": {
+          "entry_mode": "Scope"
+        }
+      },
+      "system_select": {
+        "title": "Select system",
+        "description": "Choose which system this entry should track.",
+        "data": {
+          "system_id": "System"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate",
+        "description": "Update your Tigo Energy credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Tigo API.",
+      "invalid_auth": "Invalid username or password.",
+      "no_systems": "No systems were found for this account.",
+      "account_mismatch": "The credentials belong to a different account.",
+      "unknown": "Unexpected error. Check logs and try again."
+    },
+    "abort": {
+      "already_configured": "This account/system is already configured.",
+      "reauth_successful": "Reauthentication completed successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tigo Energy options",
+        "description": "Adjust polling and freshness behavior.",
+        "data": {
+          "summary_poll_seconds": "Summary poll interval (seconds)",
+          "module_poll_seconds": "Module poll interval (seconds)",
+          "enable_module_telemetry": "Enable module-level telemetry",
+          "stale_threshold_seconds": "Stale threshold (seconds)",
+          "backfill_window_minutes": "Backfill window (minutes)",
+          "recent_cutoff_minutes": "Recent cutoff (minutes)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_power": {
+        "name": "Current power"
+      },
+      "daily_energy": {
+        "name": "Daily energy"
+      },
+      "ytd_energy": {
+        "name": "YTD energy"
+      },
+      "lifetime_energy": {
+        "name": "Lifetime energy"
+      },
+      "latest_stable_data_timestamp": {
+        "name": "Latest stable data timestamp"
+      },
+      "source_last_checkin": {
+        "name": "Last check-in"
+      },
+      "source_control_state": {
+        "name": "Control state"
+      },
+      "source_sw_version": {
+        "name": "Firmware version"
+      },
+      "source_gateway_count": {
+        "name": "Gateway count"
+      },
+      "source_serial": {
+        "name": "Source serial"
+      },
+      "module_pin": {
+        "name": "Module input power"
+      },
+      "module_vin": {
+        "name": "Module input voltage"
+      },
+      "module_iin": {
+        "name": "Module input current"
+      },
+      "module_rssi": {
+        "name": "Module RSSI"
+      }
+    }
+  }
+}
