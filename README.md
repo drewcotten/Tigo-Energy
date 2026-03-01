@@ -18,11 +18,35 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 - Native Home Assistant onboarding from **Settings > Devices & Services**
 - In-flow login with your Tigo account (token obtained internally)
 - Proactive token renewal when login response provides an `expires` timestamp (with 401 retry fallback)
-- System summary sensors (power and energy)
-- Source health sensors (check-in, control state, firmware, gateway count)
-- Optional module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`) with configurable polling
+- System summary sensors from Tigo summary metrics:
+  - current power (`last_power_dc`)
+  - daily, YTD, and lifetime energy (`daily_energy_dc`, `ytd_energy_dc`, `lifetime_energy_dc`)
+- Source health/status sensors from Tigo source records:
+  - `last_checkin`, `control_state`, `sw_version`, `gateway_count`, `serial`
+- Optional module-level telemetry from minute aggregate data:
+  - `Pin`, `Vin`, `Iin`, `RSSI` (plus system RSSI aggregate sensors)
+- Derived lag diagnostics built from source heartbeat and combined telemetry:
+  - telemetry lag (minutes), heartbeat age (minutes), lag status attributes
 - Lag-aware backfill strategy to handle delayed minute data from cloud processing
 - Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery)
+
+## Tigo Cloud Data Lag
+
+Tigo cloud data is not strictly real-time. The newest available minute can trail wall-clock time because field uploads and cloud-side processing are asynchronous.
+
+What to expect:
+
+- Minute telemetry is commonly delayed by about 10-20 minutes.
+- Delay can be longer during connectivity issues or cloud-side processing slowdowns.
+- Short windows can intermittently return empty/minimal data, then appear later.
+
+How this integration handles it:
+
+- Polls with a lag-aware trailing window instead of asking only for "now".
+- Excludes very recent buckets (`recent_cutoff_minutes`) to avoid unstable edge data.
+- Uses rolling backfill (`backfill_window_minutes`) so late-arriving data is picked up.
+- Retries once with a wider lookback if short-window results are empty.
+- Marks entities unavailable only when data age exceeds `stale_threshold_seconds`.
 
 ## Requirements
 
