@@ -31,6 +31,7 @@ from .const import (
 )
 from .coordinator import TigoModuleCoordinator, TigoSummaryCoordinator
 from .models import TigoRuntimeData
+from .notifications import CONNECTION_SOURCE_SETUP, TigoConnectionNotifier
 
 type TigoConfigEntry = ConfigEntry[TigoRuntimeData]
 
@@ -44,6 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
     """Set up Tigo Energy from a config entry."""
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
+    connection_notifier = TigoConnectionNotifier(hass, entry.entry_id, entry.title)
 
     client = TigoApiClient(
         hass=hass,
@@ -53,9 +55,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
     try:
         await client.async_login()
     except TigoApiAuthError as err:
+        await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
         raise ConfigEntryNotReady("Unable to authenticate with stored credentials") from err
     except TigoApiConnectionError as err:
+        await connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_SETUP)
         raise ConfigEntryNotReady("Unable to connect to Tigo API") from err
+    else:
+        await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
 
     options = _merged_options(entry)
     entry_mode = entry.data.get(CONF_ENTRY_MODE, ENTRY_MODE_SINGLE_SYSTEM)
@@ -72,6 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         entry_mode=entry_mode,
         configured_system_ids=configured_system_ids,
         options=options,
+        connection_notifier=connection_notifier,
     )
     await summary_coordinator.async_config_entry_first_refresh()
 
@@ -88,8 +95,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
             client=client,
             summary_coordinator=summary_coordinator,
             options=options,
+            connection_notifier=connection_notifier,
         )
         await module_coordinator.async_config_entry_first_refresh()
+
+    await connection_notifier.async_clear()
 
     runtime_data = TigoRuntimeData(
         account_id=summary_coordinator.data.account_id,
@@ -97,6 +107,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         summary_coordinator=summary_coordinator,
         module_coordinator=module_coordinator,
         tracked_system_ids=tracked_system_ids,
+        connection_notifier=connection_notifier,
     )
     runtime_data.unsub_update_listener = entry.add_update_listener(_async_options_updated)
     entry.runtime_data = runtime_data
@@ -110,6 +121,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> boo
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     runtime_data = entry.runtime_data
+    if runtime_data and runtime_data.connection_notifier is not None:
+        await runtime_data.connection_notifier.async_clear()
     if runtime_data and callable(runtime_data.unsub_update_listener):
         runtime_data.unsub_update_listener()
     return unload_ok

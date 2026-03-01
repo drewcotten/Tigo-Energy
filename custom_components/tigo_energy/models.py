@@ -98,4 +98,5 @@ class TigoRuntimeData:
     summary_coordinator: DataUpdateCoordinator[SummarySnapshot]
     module_coordinator: DataUpdateCoordinator[ModuleSnapshot] | None
     tracked_system_ids: set[int]
+    connection_notifier: Any | None = None
     unsub_update_listener: Any | None = None

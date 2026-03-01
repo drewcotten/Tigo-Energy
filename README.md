@@ -16,6 +16,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 - Source health sensors (check-in, control state, firmware, gateway count)
 - Optional module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`) with configurable polling
 - Lag-aware backfill strategy to handle delayed minute data from cloud processing
+- Persistent Home Assistant notification on Tigo API connectivity loss (auto-clears on recovery)
 
 ## Requirements
 
@@ -105,6 +106,7 @@ This integration uses a lag-aware strategy:
 ## Troubleshooting
 
 - **Invalid auth**: verify credentials in Tigo portal and run reauthenticate in integration UI.
+- **Cannot connect to Tigo API**: a Home Assistant persistent notification is shown while connectivity is down; it clears automatically once polling recovers.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` and `recent_cutoff_minutes`.
 - **Too many entities**: disable module telemetry or increase module poll interval.

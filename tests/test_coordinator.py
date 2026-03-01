@@ -6,8 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 from unittest.mock import AsyncMock
 
+from custom_components.tigo_energy.api import TigoApiConnectionError
 from custom_components.tigo_energy.const import ENTRY_MODE_SINGLE_SYSTEM
 from custom_components.tigo_energy.coordinator import TigoModuleCoordinator, TigoSummaryCoordinator
+from custom_components.tigo_energy.notifications import CONNECTION_SOURCE_SUMMARY
 
 
 async def test_summary_coordinator_fetches_system_and_sources(hass):
@@ -83,3 +85,25 @@ async def test_module_coordinator_dedupes_older_points(hass):
     second_snapshot = coordinator.data
     assert second_snapshot.dedupe_ignored_points > 0
     assert second_snapshot.points_by_key[(1001, "mod1", "Pin")].value == 110
+
+
+async def test_summary_coordinator_connection_failure_notifies(hass):
+    """Connection failures should trigger user notification path."""
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.side_effect = TigoApiConnectionError("offline")
+
+    notifier = AsyncMock()
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={},
+        connection_notifier=notifier,
+    )
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is False
+    notifier.async_report_connection_failure.assert_awaited_once_with(CONNECTION_SOURCE_SUMMARY)

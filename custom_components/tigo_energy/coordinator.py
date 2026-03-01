@@ -40,6 +40,11 @@ from .models import (
     SummarySnapshot,
     SystemSnapshot,
 )
+from .notifications import (
+    CONNECTION_SOURCE_MODULES,
+    CONNECTION_SOURCE_SUMMARY,
+    TigoConnectionNotifier,
+)
 
 METRICS: tuple[str, ...] = ("Pin", "Vin", "Iin", "RSSI")
 LOGGER = logging.getLogger(__name__)
@@ -55,11 +60,13 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         entry_mode: str,
         configured_system_ids: set[int],
         options: Mapping[str, Any],
+        connection_notifier: TigoConnectionNotifier | None = None,
     ) -> None:
         self._client = client
         self._entry_mode = entry_mode
         self._configured_system_ids = configured_system_ids
         self._options = options
+        self._connection_notifier = connection_notifier
         self.tracked_system_ids: set[int] = set(configured_system_ids)
 
         interval = int(options.get(OPT_SUMMARY_POLL_SECONDS, DEFAULT_SUMMARY_POLL_SECONDS))
@@ -78,10 +85,13 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         try:
             list_payload = await self._client.async_list_systems()
         except TigoApiAuthError as err:
+            await self._async_report_connection_recovered()
             raise ConfigEntryAuthFailed from err
         except TigoApiConnectionError as err:
+            await self._async_report_connection_failure()
             raise UpdateFailed("Could not reach Tigo API") from err
         except TigoApiError as err:
+            await self._async_report_connection_recovered()
             raise UpdateFailed(f"Unexpected Tigo API error: {err}") from err
 
         systems_from_api: dict[int, dict[str, Any]] = {}
@@ -97,6 +107,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             target_system_ids = set(self._configured_system_ids)
 
         if not target_system_ids:
+            await self._async_report_connection_recovered()
             raise UpdateFailed("No Tigo systems available for this entry")
 
         systems: dict[int, SystemSnapshot] = {}
@@ -108,10 +119,13 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 summary = await self._client.async_get_summary(system_id)
                 sources_raw = await self._client.async_get_sources(system_id)
             except TigoApiAuthError as err:
+                await self._async_report_connection_recovered()
                 raise ConfigEntryAuthFailed from err
             except TigoApiConnectionError as err:
+                await self._async_report_connection_failure()
                 raise UpdateFailed("Could not reach Tigo API") from err
             except TigoApiError as err:
+                await self._async_report_connection_recovered()
                 raise UpdateFailed(f"Failed to fetch system {system_id}: {err}") from err
 
             source_snapshots: list[SourceSnapshot] = []
@@ -174,6 +188,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         is_stale = bool(lag_seconds and lag_seconds > stale_threshold)
 
         self.tracked_system_ids = set(systems)
+        await self._async_report_connection_recovered()
 
         account_id = self._client.account_id or "unknown"
         return SummarySnapshot(
@@ -187,6 +202,20 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             ),
         )
 
+    async def _async_report_connection_failure(self) -> None:
+        """Show connectivity notification when this coordinator cannot reach API."""
+        if self._connection_notifier is None:
+            return
+        await self._connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_SUMMARY)
+
+    async def _async_report_connection_recovered(self) -> None:
+        """Dismiss connectivity notification when this coordinator recovers."""
+        if self._connection_notifier is None:
+            return
+        await self._connection_notifier.async_report_connection_recovered(
+            CONNECTION_SOURCE_SUMMARY
+        )
+
 
 class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
     """Coordinator that fetches module-level telemetry with lag-aware backfill."""
@@ -197,10 +226,12 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         client: TigoApiClient,
         summary_coordinator: TigoSummaryCoordinator,
         options: Mapping[str, Any],
+        connection_notifier: TigoConnectionNotifier | None = None,
     ) -> None:
         self._client = client
         self._summary_coordinator = summary_coordinator
         self._options = options
+        self._connection_notifier = connection_notifier
         self._points_by_key: dict[tuple[int, str, str], ModulePoint] = {}
 
         interval = int(options.get(OPT_MODULE_POLL_SECONDS, DEFAULT_MODULE_POLL_SECONDS))
@@ -225,6 +256,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         system_ids = sorted(self._summary_coordinator.tracked_system_ids)
         if not system_ids:
             fetched = datetime.now(UTC)
+            await self._async_report_connection_recovered()
             return ModuleSnapshot(
                 points_by_key=dict(self._points_by_key),
                 by_system={},
@@ -253,10 +285,13 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                         metric=metric,
                     )
                 except TigoApiAuthError as err:
+                    await self._async_report_connection_recovered()
                     raise ConfigEntryAuthFailed from err
                 except TigoApiConnectionError as err:
+                    await self._async_report_connection_failure()
                     raise UpdateFailed("Could not reach Tigo API") from err
                 except TigoApiError as err:
+                    await self._async_report_connection_recovered()
                     raise UpdateFailed(
                         f"Failed to fetch module metric {metric} for system {system_id}: {err}"
                     ) from err
@@ -292,6 +327,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         fetched_at = datetime.now(UTC)
         lag_seconds = (fetched_at - latest_seen).total_seconds() if latest_seen else None
         is_stale = bool(lag_seconds and lag_seconds > stale_threshold)
+        await self._async_report_connection_recovered()
 
         return ModuleSnapshot(
             points_by_key=dict(self._points_by_key),
@@ -303,6 +339,20 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 is_stale=is_stale,
             ),
             dedupe_ignored_points=dedupe_ignored_points,
+        )
+
+    async def _async_report_connection_failure(self) -> None:
+        """Show connectivity notification when this coordinator cannot reach API."""
+        if self._connection_notifier is None:
+            return
+        await self._connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_MODULES)
+
+    async def _async_report_connection_recovered(self) -> None:
+        """Dismiss connectivity notification when this coordinator recovers."""
+        if self._connection_notifier is None:
+            return
+        await self._connection_notifier.async_report_connection_recovered(
+            CONNECTION_SOURCE_MODULES
         )
 
 
