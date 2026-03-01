@@ -15,22 +15,20 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 
 ## Features
 
-- Native Home Assistant onboarding from **Settings > Devices & Services**
-- In-flow login with your Tigo account (token obtained internally)
-- Proactive token renewal when login response provides an `expires` timestamp (with 401 retry fallback)
-- System summary sensors from Tigo summary metrics:
-  - current power (`last_power_dc`)
-  - daily, YTD, and lifetime energy (`daily_energy_dc`, `ytd_energy_dc`, `lifetime_energy_dc`)
-- Source health/status sensors from Tigo source records:
-  - `last_checkin`, `control_state`, `sw_version`, `gateway_count`, `serial`
-- Optional module-level telemetry from minute aggregate data:
-  - `Pin`, `Vin`, `Iin`, `RSSI` (plus system RSSI aggregate sensors)
-- Derived lag diagnostics built from source heartbeat and combined telemetry:
-  - telemetry lag (minutes), heartbeat age (minutes), lag status attributes
-- Lag-aware backfill strategy to handle delayed minute data from cloud processing
-- Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery)
+- System performance sensors from Tigo summary data: current power, daily energy, YTD energy, and lifetime energy (`last_power_dc`, `daily_energy_dc`, `ytd_energy_dc`, `lifetime_energy_dc`).
+- Source health sensors from Tigo gateway/source data: last check-in, control state, firmware version, gateway count, and serial (`last_checkin`, `control_state`, `sw_version`, `gateway_count`, `serial`).
+- Optional module telemetry from minute aggregate data: per-module input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus system-level RSSI aggregate sensors.
+- Derived lag diagnostics from source heartbeat vs combined telemetry: telemetry lag (minutes), heartbeat age (minutes), and lag status attributes.
+- Lag-aware rolling backfill to handle delayed minute uploads and short-window empty responses.
+- Sensor footprint:
+  - Core (module telemetry off): 12 sensors per system when one source is present (7 system-level + 5 source-level); add 5 sensors per additional source.
+  - Module telemetry on: add 4 sensors per module (`Pin`, `Vin`, `Iin`, `RSSI`) plus 3 RSSI aggregate sensors per system.
+- Native Home Assistant onboarding from **Settings > Devices & Services**.
+- In-flow login with your Tigo account (token obtained internally).
+- Proactive token renewal when login response provides an `expires` timestamp (with 401 retry fallback).
+- Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery).
 
-## Tigo Cloud Data Lag
+## Tigo API Data Time Lag
 
 Tigo cloud data is not strictly real-time. The newest available minute can trail wall-clock time because field uploads and cloud-side processing are asynchronous.
 
@@ -48,9 +46,11 @@ How this integration handles it:
 - Retries once with a wider lookback if short-window results are empty.
 - Marks entities unavailable only when data age exceeds `stale_threshold_seconds`.
 
+In Home Assistant, this means dashboards show the latest stable cloud value rather than true real-time output, short chart gaps can appear and then fill in later as delayed buckets are backfilled, automations should use freshness/lag context (for example `telemetry_lag_status` and stale attributes) instead of assuming current-minute data, and alert thresholds should allow for normal cloud delay before treating missing recent minutes as a fault.
+
 ## Requirements
 
-- Home Assistant `2026.3.0` or newer
+- Home Assistant `2026.2.0` or newer
 - Tigo Premium account/API access
 - Internet access from Home Assistant to Tigo cloud API
 
@@ -101,37 +101,37 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 
 ## Entities
 
-### System summary
+These are the exact Home Assistant sensor names created by this integration.
 
-- Current power (`last_power_dc`)
-- Daily energy (`daily_energy_dc`)
-- YTD energy (`ytd_energy_dc`)
-- Lifetime energy (`lifetime_energy_dc`)
+### System device (`<System Name>`)
+
+- Current power
+- Daily energy
+- YTD energy
+- Lifetime energy
 - Latest stable data timestamp
-- Telemetry lag (minutes)
-- Heartbeat age (minutes)
+- Telemetry lag
+- Heartbeat age
 
-### Source health and diagnostics
+### Source device (`<Source Name>`)
 
 - Last check-in
 - Control state
-- Firmware/software version
+- Firmware version
 - Gateway count
 - Source serial
 
-### Module telemetry (opt-in)
+### Module device (`Module <module_id>`, opt-in)
 
-When `enable_module_telemetry` is true, per-module sensors are created for:
+- Module input power
+- Module input voltage
+- Module input current
+- Module RSSI
 
-- `Pin` (W)
-- `Vin` (V)
-- `Iin` (A)
-- `RSSI` (Tigo index on `0-255`, not dBm)
+### Additional system diagnostics (when module telemetry is enabled)
 
-When module telemetry is enabled, system-level RSSI aggregate sensors are also created:
-
-- Low RSSI module count (`< rssi_alert_threshold`)
-- Watch RSSI module count (`>= rssi_alert_threshold` and `< rssi_watch_threshold`)
+- Low RSSI module count
+- Watch RSSI module count
 - Worst module RSSI
 
 ### RSSI Attributes
