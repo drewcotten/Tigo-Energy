@@ -16,8 +16,12 @@ from .const import (
     ATTR_DATA_LAG_SECONDS,
     ATTR_IS_STALE,
     ATTR_LATEST_STABLE_TIMESTAMP,
+    DEFAULT_RSSI_ALERT_THRESHOLD,
+    DEFAULT_RSSI_WATCH_THRESHOLD,
     DOMAIN,
     MANUFACTURER,
+    OPT_RSSI_ALERT_THRESHOLD,
+    OPT_RSSI_WATCH_THRESHOLD,
 )
 from .coordinator import METRICS
 from .models import (
@@ -50,6 +54,17 @@ class SourceMetricDescription:
     translation_key: str
     device_class: SensorDeviceClass | None = None
     unit: str | None = None
+    entity_category: EntityCategory | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RssiAggregateMetricDescription:
+    """Description of one RSSI aggregate sensor."""
+
+    key: str
+    translation_key: str
+    unit: str | None = None
+    state_class: SensorStateClass | None = None
     entity_category: EntityCategory | None = None
 
 
@@ -89,6 +104,26 @@ SYSTEM_METRICS: tuple[SystemMetricDescription, ...] = (
     ),
 )
 
+RSSI_AGGREGATE_METRICS: tuple[RssiAggregateMetricDescription, ...] = (
+    RssiAggregateMetricDescription(
+        key="low_rssi_module_count",
+        translation_key="low_rssi_module_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    RssiAggregateMetricDescription(
+        key="watch_rssi_module_count",
+        translation_key="watch_rssi_module_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    RssiAggregateMetricDescription(
+        key="worst_rssi",
+        translation_key="worst_module_rssi",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
 SOURCE_METRICS: tuple[SourceMetricDescription, ...] = (
     SourceMetricDescription(
         key="last_checkin",
@@ -121,7 +156,7 @@ MODULE_METRIC_UNITS: dict[str, str | None] = {
     "Pin": UnitOfPower.WATT,
     "Vin": UnitOfElectricPotential.VOLT,
     "Iin": UnitOfElectricCurrent.AMPERE,
-    "RSSI": "dBm",
+    "RSSI": None,
 }
 
 MODULE_METRIC_DEVICE_CLASSES: dict[str, SensorDeviceClass | None] = {
@@ -171,6 +206,7 @@ class TigoEntityManager:
         self._known_system_metric_keys: set[tuple[int, str]] = set()
         self._known_source_metric_keys: set[tuple[int, str, str]] = set()
         self._known_module_metric_keys: set[tuple[int, str, str]] = set()
+        self._known_rssi_aggregate_keys: set[tuple[int, str]] = set()
 
     def collect_initial_entities(self) -> list[SensorEntity]:
         """Collect initial entities from current coordinator data."""
@@ -180,6 +216,7 @@ class TigoEntityManager:
 
         if self._runtime.module_coordinator is not None:
             entities.extend(self._new_module_entities(self._runtime.module_coordinator.data))
+            entities.extend(self._new_rssi_aggregate_entities(self._runtime.summary_coordinator.data))
 
         return entities
 
@@ -190,6 +227,8 @@ class TigoEntityManager:
         self._runtime.tracked_system_ids = set(data.systems)
         new_entities.extend(self._new_system_entities(data))
         new_entities.extend(self._new_source_entities(data))
+        if self._runtime.module_coordinator is not None:
+            new_entities.extend(self._new_rssi_aggregate_entities(data))
         if new_entities:
             self._async_add_entities(new_entities)
 
@@ -199,6 +238,7 @@ class TigoEntityManager:
             return
 
         new_entities = self._new_module_entities(self._runtime.module_coordinator.data)
+        new_entities.extend(self._new_rssi_aggregate_entities(self._runtime.summary_coordinator.data))
         if new_entities:
             self._async_add_entities(new_entities)
 
@@ -261,6 +301,28 @@ class TigoEntityManager:
                             metric=metric,
                         )
                     )
+        return new_entities
+
+    def _new_rssi_aggregate_entities(self, data: SummarySnapshot) -> list[SensorEntity]:
+        """Create RSSI aggregate entities for systems."""
+        if self._runtime.module_coordinator is None:
+            return []
+
+        new_entities: list[SensorEntity] = []
+        for system_id in sorted(data.systems):
+            for description in RSSI_AGGREGATE_METRICS:
+                key = (system_id, description.key)
+                if key in self._known_rssi_aggregate_keys:
+                    continue
+                self._known_rssi_aggregate_keys.add(key)
+                new_entities.append(
+                    TigoRssiAggregateSensor(
+                        entry=self._entry,
+                        runtime=self._runtime,
+                        system_id=system_id,
+                        description=description,
+                    )
+                )
         return new_entities
 
 
@@ -466,6 +528,7 @@ class TigoModuleSensor(TigoBaseEntity):
         attrs = super().extra_state_attributes
         point = self._point
         module_freshness = self._runtime.module_coordinator.data.freshness if self._runtime.module_coordinator else None
+        rssi_watch_threshold, rssi_alert_threshold = _rssi_thresholds_from_entry(self._entry)
         attrs.update(
             {
                 "module_id": self._module_id,
@@ -475,6 +538,19 @@ class TigoModuleSensor(TigoBaseEntity):
                 "module_data_is_stale": module_freshness.is_stale if module_freshness else True,
             }
         )
+        if self._metric == "RSSI":
+            attrs.update(
+                {
+                    "rssi_scale": "0-255",
+                    "rssi_watch_threshold": rssi_watch_threshold,
+                    "rssi_alert_threshold": rssi_alert_threshold,
+                    "rssi_status": _rssi_status_label(
+                        point.value if point else None,
+                        watch_threshold=rssi_watch_threshold,
+                        alert_threshold=rssi_alert_threshold,
+                    ),
+                }
+            )
         return attrs
 
     @property
@@ -484,6 +560,72 @@ class TigoModuleSensor(TigoBaseEntity):
         return self._runtime.module_coordinator.data.points_by_key.get(
             (self._system_id, self._module_id, self._metric)
         )
+
+
+class TigoRssiAggregateSensor(TigoBaseEntity):
+    """System-level aggregate sensor for RSSI health."""
+
+    entity_description: RssiAggregateMetricDescription
+
+    def __init__(
+        self,
+        *,
+        entry: ConfigEntry,
+        runtime: TigoRuntimeData,
+        system_id: int,
+        description: RssiAggregateMetricDescription,
+    ) -> None:
+        coordinator = runtime.module_coordinator
+        if coordinator is None:
+            raise RuntimeError("Module coordinator is not available")
+
+        super().__init__(
+            entry=entry,
+            runtime=runtime,
+            coordinator=coordinator,
+            system_id=system_id,
+        )
+        self.entity_description = description
+        self._attr_unique_id = f"{entry.entry_id}_system_{system_id}_{description.key}"
+        self._attr_translation_key = description.translation_key
+        self._attr_native_unit_of_measurement = description.unit
+        self._attr_state_class = description.state_class
+        self._attr_entity_category = description.entity_category
+
+    @property
+    def available(self) -> bool:
+        if self._runtime.module_coordinator is None:
+            return False
+        if not super().available:
+            return False
+        return not self._runtime.module_coordinator.data.freshness.is_stale
+
+    @property
+    def native_value(self) -> Any:
+        rssi_values = _rssi_values_for_system(self._runtime, self._system_id)
+        if self.entity_description.key == "worst_rssi":
+            return min(rssi_values) if rssi_values else None
+
+        watch_threshold, alert_threshold = _rssi_thresholds_from_entry(self._entry)
+        if self.entity_description.key == "low_rssi_module_count":
+            return sum(1 for value in rssi_values if value < alert_threshold)
+        if self.entity_description.key == "watch_rssi_module_count":
+            return sum(1 for value in rssi_values if alert_threshold <= value < watch_threshold)
+
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        watch_threshold, alert_threshold = _rssi_thresholds_from_entry(self._entry)
+        attrs.update(
+            {
+                "rssi_scale": "0-255",
+                "rssi_watch_threshold": watch_threshold,
+                "rssi_alert_threshold": alert_threshold,
+            }
+        )
+        return attrs
 
 
 def _find_source(data: SummarySnapshot, system_id: int, source_id: str) -> SourceSnapshot | None:
@@ -512,3 +654,40 @@ def _to_kwh(value: Any) -> float | None:
         return round(float(value) / 1000, 3)
     except (TypeError, ValueError):
         return None
+
+
+def _rssi_values_for_system(runtime: TigoRuntimeData, system_id: int) -> list[float]:
+    """Return latest RSSI values for all modules in one system."""
+    if runtime.module_coordinator is None:
+        return []
+    modules = runtime.module_coordinator.data.by_system.get(system_id, {})
+    values: list[float] = []
+    for module_metrics in modules.values():
+        point = module_metrics.get("RSSI")
+        if point is None:
+            continue
+        values.append(point.value)
+    return values
+
+
+def _rssi_thresholds_from_entry(entry: ConfigEntry) -> tuple[int, int]:
+    """Return configured RSSI watch/alert thresholds."""
+    watch_threshold = int(entry.options.get(OPT_RSSI_WATCH_THRESHOLD, DEFAULT_RSSI_WATCH_THRESHOLD))
+    alert_threshold = int(entry.options.get(OPT_RSSI_ALERT_THRESHOLD, DEFAULT_RSSI_ALERT_THRESHOLD))
+    return watch_threshold, alert_threshold
+
+
+def _rssi_status_label(
+    value: float | None,
+    *,
+    watch_threshold: int,
+    alert_threshold: int,
+) -> str | None:
+    """Return RSSI status label from configured thresholds."""
+    if value is None:
+        return None
+    if value < alert_threshold:
+        return "alert"
+    if value < watch_threshold:
+        return "watch"
+    return "good"

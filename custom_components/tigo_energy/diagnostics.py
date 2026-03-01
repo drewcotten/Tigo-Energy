@@ -46,6 +46,9 @@ async def async_get_config_entry_diagnostics(
                     "lag_seconds": module_data.freshness.lag_seconds,
                     "is_stale": module_data.freshness.is_stale,
                     "dedupe_ignored_points": module_data.dedupe_ignored_points,
+                    "low_rssi_module_count": module_data.low_rssi_module_count,
+                    "watch_rssi_module_count": module_data.watch_rssi_module_count,
+                    "worst_rssi": module_data.worst_rssi,
                 }
                 if module_data
                 else None

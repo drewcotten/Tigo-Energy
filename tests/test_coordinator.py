@@ -7,7 +7,12 @@ from typing import ClassVar
 from unittest.mock import AsyncMock
 
 from custom_components.tigo_energy.api import TigoApiConnectionError
-from custom_components.tigo_energy.const import ENTRY_MODE_SINGLE_SYSTEM
+from custom_components.tigo_energy.const import (
+    ENTRY_MODE_SINGLE_SYSTEM,
+    OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
+    OPT_RSSI_ALERT_THRESHOLD,
+    OPT_RSSI_WATCH_THRESHOLD,
+)
 from custom_components.tigo_energy.coordinator import TigoModuleCoordinator, TigoSummaryCoordinator
 from custom_components.tigo_energy.notifications import CONNECTION_SOURCE_SUMMARY
 
@@ -107,3 +112,47 @@ async def test_summary_coordinator_connection_failure_notifies(hass):
 
     assert coordinator.last_update_success is False
     notifier.async_report_connection_failure.assert_awaited_once_with(CONNECTION_SOURCE_SUMMARY)
+
+
+async def test_module_coordinator_low_rssi_alert_debounced(hass):
+    """Low RSSI notification should trigger only after debounce window."""
+
+    class DummySummary:
+        tracked_system_ids: ClassVar[set[int]] = {1001}
+
+    now = datetime.now(UTC)
+    state = {"rssi": 70.0, "ts": now}
+
+    def side_effect(*args, **kwargs):
+        metric = kwargs["metric"]
+        value = state["rssi"] if metric == "RSSI" else 100.0
+        return f"Datetime,mod1\n{state['ts'].isoformat()},{value}\n"
+
+    mock_client = AsyncMock()
+    mock_client.async_get_aggregate_csv.side_effect = side_effect
+
+    notifier = AsyncMock()
+    coordinator = TigoModuleCoordinator(
+        hass=hass,
+        client=mock_client,
+        summary_coordinator=DummySummary(),
+        options={
+            OPT_RSSI_WATCH_THRESHOLD: 120,
+            OPT_RSSI_ALERT_THRESHOLD: 80,
+            OPT_RSSI_ALERT_CONSECUTIVE_POLLS: 2,
+        },
+        connection_notifier=notifier,
+    )
+
+    await coordinator.async_refresh()
+    assert coordinator.data.low_rssi_module_count == 1
+    notifier.async_report_low_rssi_alert.assert_not_called()
+
+    await coordinator.async_refresh()
+    notifier.async_report_low_rssi_alert.assert_awaited_once()
+
+    state["rssi"] = 130.0
+    state["ts"] = now + timedelta(minutes=1)
+    await coordinator.async_refresh()
+    assert coordinator.data.low_rssi_module_count == 0
+    notifier.async_clear_low_rssi_alert.assert_awaited_once()

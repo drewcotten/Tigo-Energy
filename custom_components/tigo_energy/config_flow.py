@@ -22,6 +22,9 @@ from .const import (
     DEFAULT_ENABLE_MODULE_TELEMETRY,
     DEFAULT_MODULE_POLL_SECONDS,
     DEFAULT_RECENT_CUTOFF_MINUTES,
+    DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
+    DEFAULT_RSSI_ALERT_THRESHOLD,
+    DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
     DOMAIN,
@@ -30,16 +33,23 @@ from .const import (
     MAX_BACKFILL_WINDOW_MINUTES,
     MAX_POLL_SECONDS,
     MAX_RECENT_CUTOFF_MINUTES,
+    MAX_RSSI_ALERT_CONSECUTIVE_POLLS,
+    MAX_RSSI_THRESHOLD,
     MAX_STALE_THRESHOLD_SECONDS,
     MIN_BACKFILL_WINDOW_MINUTES,
     MIN_MODULE_POLL_SECONDS,
     MIN_RECENT_CUTOFF_MINUTES,
+    MIN_RSSI_ALERT_CONSECUTIVE_POLLS,
+    MIN_RSSI_THRESHOLD,
     MIN_STALE_THRESHOLD_SECONDS,
     MIN_SUMMARY_POLL_SECONDS,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_MODULE_TELEMETRY,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
+    OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
+    OPT_RSSI_ALERT_THRESHOLD,
+    OPT_RSSI_WATCH_THRESHOLD,
     OPT_STALE_THRESHOLD_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
 )
@@ -306,8 +316,14 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage integration options."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            watch_threshold = int(user_input[OPT_RSSI_WATCH_THRESHOLD])
+            alert_threshold = int(user_input[OPT_RSSI_ALERT_THRESHOLD])
+            if watch_threshold <= alert_threshold:
+                errors["base"] = "rssi_threshold_order"
+            else:
+                return self.async_create_entry(title="", data=user_input)
 
         options = self._config_entry.options
 
@@ -352,10 +368,43 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                     vol.Coerce(int),
                     vol.Range(min=MIN_RECENT_CUTOFF_MINUTES, max=MAX_RECENT_CUTOFF_MINUTES),
                 ),
+                vol.Required(
+                    OPT_RSSI_WATCH_THRESHOLD,
+                    default=int(
+                        options.get(OPT_RSSI_WATCH_THRESHOLD, DEFAULT_RSSI_WATCH_THRESHOLD)
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_RSSI_THRESHOLD, max=MAX_RSSI_THRESHOLD),
+                ),
+                vol.Required(
+                    OPT_RSSI_ALERT_THRESHOLD,
+                    default=int(
+                        options.get(OPT_RSSI_ALERT_THRESHOLD, DEFAULT_RSSI_ALERT_THRESHOLD)
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_RSSI_THRESHOLD, max=MAX_RSSI_THRESHOLD),
+                ),
+                vol.Required(
+                    OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
+                    default=int(
+                        options.get(
+                            OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
+                            DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
+                        )
+                    ),
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(
+                        min=MIN_RSSI_ALERT_CONSECUTIVE_POLLS,
+                        max=MAX_RSSI_ALERT_CONSECUTIVE_POLLS,
+                    ),
+                ),
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
 
 
 @dataclass(slots=True)

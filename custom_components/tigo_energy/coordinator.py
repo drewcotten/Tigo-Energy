@@ -23,12 +23,18 @@ from .const import (
     DEFAULT_BACKFILL_WINDOW_MINUTES,
     DEFAULT_MODULE_POLL_SECONDS,
     DEFAULT_RECENT_CUTOFF_MINUTES,
+    DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
+    DEFAULT_RSSI_ALERT_THRESHOLD,
+    DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
     ENTRY_MODE_ALL_SYSTEMS,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
+    OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
+    OPT_RSSI_ALERT_THRESHOLD,
+    OPT_RSSI_WATCH_THRESHOLD,
     OPT_STALE_THRESHOLD_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
 )
@@ -233,6 +239,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         self._options = options
         self._connection_notifier = connection_notifier
         self._points_by_key: dict[tuple[int, str, str], ModulePoint] = {}
+        self._low_rssi_poll_streak = 0
 
         interval = int(options.get(OPT_MODULE_POLL_SECONDS, DEFAULT_MODULE_POLL_SECONDS))
         super().__init__(
@@ -252,11 +259,24 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         recent_cutoff_minutes = int(
             self._options.get(OPT_RECENT_CUTOFF_MINUTES, DEFAULT_RECENT_CUTOFF_MINUTES)
         )
+        rssi_watch_threshold = int(
+            self._options.get(OPT_RSSI_WATCH_THRESHOLD, DEFAULT_RSSI_WATCH_THRESHOLD)
+        )
+        rssi_alert_threshold = int(
+            self._options.get(OPT_RSSI_ALERT_THRESHOLD, DEFAULT_RSSI_ALERT_THRESHOLD)
+        )
+        rssi_alert_consecutive_polls = int(
+            self._options.get(
+                OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
+                DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
+            )
+        )
 
         system_ids = sorted(self._summary_coordinator.tracked_system_ids)
         if not system_ids:
             fetched = datetime.now(UTC)
             await self._async_report_connection_recovered()
+            await self._async_clear_low_rssi_alert()
             return ModuleSnapshot(
                 points_by_key=dict(self._points_by_key),
                 by_system={},
@@ -267,6 +287,9 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                     is_stale=True,
                 ),
                 dedupe_ignored_points=0,
+                low_rssi_module_count=0,
+                watch_rssi_module_count=0,
+                worst_rssi=None,
             )
 
         window_end = datetime.now(UTC) - timedelta(minutes=recent_cutoff_minutes)
@@ -324,10 +347,31 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 point.metric
             ] = point
 
+        low_rssi_count, watch_rssi_count, worst_rssi = _compute_rssi_health(
+            self._points_by_key,
+            watch_threshold=rssi_watch_threshold,
+            alert_threshold=rssi_alert_threshold,
+        )
+        if low_rssi_count > 0:
+            self._low_rssi_poll_streak += 1
+        else:
+            self._low_rssi_poll_streak = 0
+
         fetched_at = datetime.now(UTC)
         lag_seconds = (fetched_at - latest_seen).total_seconds() if latest_seen else None
         is_stale = bool(lag_seconds and lag_seconds > stale_threshold)
         await self._async_report_connection_recovered()
+        if low_rssi_count > 0 and self._low_rssi_poll_streak >= rssi_alert_consecutive_polls:
+            await self._async_report_low_rssi_alert(
+                low_count=low_rssi_count,
+                watch_count=watch_rssi_count,
+                worst_rssi=worst_rssi,
+                alert_threshold=rssi_alert_threshold,
+                watch_threshold=rssi_watch_threshold,
+                consecutive_polls=rssi_alert_consecutive_polls,
+            )
+        elif low_rssi_count == 0:
+            await self._async_clear_low_rssi_alert()
 
         return ModuleSnapshot(
             points_by_key=dict(self._points_by_key),
@@ -339,6 +383,9 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 is_stale=is_stale,
             ),
             dedupe_ignored_points=dedupe_ignored_points,
+            low_rssi_module_count=low_rssi_count,
+            watch_rssi_module_count=watch_rssi_count,
+            worst_rssi=worst_rssi,
         )
 
     async def _async_report_connection_failure(self) -> None:
@@ -354,6 +401,34 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         await self._connection_notifier.async_report_connection_recovered(
             CONNECTION_SOURCE_MODULES
         )
+
+    async def _async_report_low_rssi_alert(
+        self,
+        *,
+        low_count: int,
+        watch_count: int,
+        worst_rssi: float | None,
+        alert_threshold: int,
+        watch_threshold: int,
+        consecutive_polls: int,
+    ) -> None:
+        """Show persistent alert for sustained low RSSI values."""
+        if self._connection_notifier is None:
+            return
+        await self._connection_notifier.async_report_low_rssi_alert(
+            low_count=low_count,
+            watch_count=watch_count,
+            worst_rssi=worst_rssi,
+            alert_threshold=alert_threshold,
+            watch_threshold=watch_threshold,
+            consecutive_polls=consecutive_polls,
+        )
+
+    async def _async_clear_low_rssi_alert(self) -> None:
+        """Clear low RSSI alert notification."""
+        if self._connection_notifier is None:
+            return
+        await self._connection_notifier.async_clear_low_rssi_alert()
 
 
 def _extract_source_latest_timestamp(source: dict[str, Any]) -> datetime | None:
@@ -408,3 +483,24 @@ def _as_optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _compute_rssi_health(
+    points_by_key: Mapping[tuple[int, str, str], ModulePoint],
+    *,
+    watch_threshold: int,
+    alert_threshold: int,
+) -> tuple[int, int, float | None]:
+    """Return counts for low/watch RSSI and worst observed RSSI."""
+    rssi_values = [
+        point.value
+        for (_, _, metric), point in points_by_key.items()
+        if metric == "RSSI"
+    ]
+    if not rssi_values:
+        return 0, 0, None
+
+    low_count = sum(1 for value in rssi_values if value < alert_threshold)
+    watch_count = sum(1 for value in rssi_values if alert_threshold <= value < watch_threshold)
+    worst_rssi = min(rssi_values)
+    return low_count, watch_count, worst_rssi

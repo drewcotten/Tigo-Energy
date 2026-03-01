@@ -63,6 +63,9 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - `stale_threshold_seconds` (default `3600`)
 - `backfill_window_minutes` (default `120`)
 - `recent_cutoff_minutes` (default `20`)
+- `rssi_watch_threshold` (default `120`)
+- `rssi_alert_threshold` (default `80`)
+- `rssi_alert_consecutive_polls` (default `3`)
 
 ## Entities
 
@@ -89,7 +92,13 @@ When `enable_module_telemetry` is true, per-module sensors are created for:
 - `Pin` (W)
 - `Vin` (V)
 - `Iin` (A)
-- `RSSI` (dBm)
+- `RSSI` (Tigo index on `0-255`, not dBm)
+
+When module telemetry is enabled, system-level RSSI aggregate sensors are also created:
+
+- Low RSSI module count (`< rssi_alert_threshold`)
+- Watch RSSI module count (`>= rssi_alert_threshold` and `< rssi_watch_threshold`)
+- Worst module RSSI
 
 ## Data Freshness and Cloud Lag
 
@@ -107,6 +116,7 @@ This integration uses a lag-aware strategy:
 
 - **Invalid auth**: verify credentials in Tigo portal and run reauthenticate in integration UI.
 - **Cannot connect to Tigo API**: a Home Assistant persistent notification is shown while connectivity is down; it clears automatically once polling recovers.
+- **Low RSSI alert**: a Home Assistant persistent notification appears when low RSSI persists for the configured debounce window (`rssi_alert_consecutive_polls`) and auto-clears when no modules remain below `rssi_alert_threshold`.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` and `recent_cutoff_minutes`.
 - **Too many entities**: disable module telemetry or increase module poll interval.

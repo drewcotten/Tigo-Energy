@@ -63,9 +63,15 @@
           "enable_module_telemetry": "Enable module-level telemetry",
           "stale_threshold_seconds": "Stale threshold (seconds)",
           "backfill_window_minutes": "Backfill window (minutes)",
-          "recent_cutoff_minutes": "Recent cutoff (minutes)"
+          "recent_cutoff_minutes": "Recent cutoff (minutes)",
+          "rssi_watch_threshold": "RSSI watch threshold",
+          "rssi_alert_threshold": "RSSI alert threshold",
+          "rssi_alert_consecutive_polls": "Low RSSI alert debounce (polls)"
         }
       }
+    },
+    "error": {
+      "rssi_threshold_order": "RSSI watch threshold must be greater than RSSI alert threshold."
     }
   },
   "entity": {
@@ -111,6 +117,15 @@
       },
       "module_rssi": {
         "name": "Module RSSI"
+      },
+      "low_rssi_module_count": {
+        "name": "Low RSSI module count"
+      },
+      "watch_rssi_module_count": {
+        "name": "Watch RSSI module count"
+      },
+      "worst_module_rssi": {
+        "name": "Worst module RSSI"
       }
     }
   }

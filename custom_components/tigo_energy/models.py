@@ -38,6 +38,9 @@ class ModuleSnapshot:
     by_system: dict[int, dict[str, dict[str, ModulePoint]]]
     freshness: FreshnessState
     dedupe_ignored_points: int = 0
+    low_rssi_module_count: int = 0
+    watch_rssi_module_count: int = 0
+    worst_rssi: float | None = None
 
 
 @dataclass(slots=True)

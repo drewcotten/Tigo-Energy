@@ -52,3 +52,29 @@ async def test_connection_notifier_dismisses_only_after_all_recover(hass):
 
     assert mock_create.call_count == 1
     mock_dismiss.assert_called_once()
+
+
+async def test_low_rssi_notification_create_and_clear(hass):
+    """Low RSSI alert should create and clear via dedicated notification id."""
+    notifier = TigoConnectionNotifier(hass, "entry-1", "Tigo Energy")
+
+    with (
+        patch(
+            "custom_components.tigo_energy.notifications.persistent_notification.async_create"
+        ) as mock_create,
+        patch(
+            "custom_components.tigo_energy.notifications.persistent_notification.async_dismiss"
+        ) as mock_dismiss,
+    ):
+        await notifier.async_report_low_rssi_alert(
+            low_count=2,
+            watch_count=1,
+            worst_rssi=72.0,
+            alert_threshold=80,
+            watch_threshold=120,
+            consecutive_polls=3,
+        )
+        await notifier.async_clear_low_rssi_alert()
+
+    mock_create.assert_called_once()
+    mock_dismiss.assert_called_once()

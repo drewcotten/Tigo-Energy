@@ -17,8 +17,13 @@ def connection_notification_id(entry_id: str) -> str:
     return f"{DOMAIN}_{entry_id}_cannot_connect"
 
 
+def low_rssi_notification_id(entry_id: str) -> str:
+    """Return stable low-RSSI notification id for one config entry."""
+    return f"{DOMAIN}_{entry_id}_low_rssi"
+
+
 class TigoConnectionNotifier:
-    """Tracks connectivity failures and manages one persistent notification."""
+    """Tracks connectivity and RSSI alerts via persistent notifications."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str, entry_title: str) -> None:
         self._hass = hass
@@ -30,6 +35,11 @@ class TigoConnectionNotifier:
     def notification_id(self) -> str:
         """Return the persistent notification id."""
         return connection_notification_id(self._entry_id)
+
+    @property
+    def low_rssi_alert_notification_id(self) -> str:
+        """Return low-RSSI alert notification id."""
+        return low_rssi_notification_id(self._entry_id)
 
     async def async_report_connection_failure(self, source: str) -> None:
         """Mark one source as failed and create notification when first failing."""
@@ -64,4 +74,41 @@ class TigoConnectionNotifier:
         persistent_notification.async_dismiss(
             self._hass,
             notification_id=self.notification_id,
+        )
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.low_rssi_alert_notification_id,
+        )
+
+    async def async_report_low_rssi_alert(
+        self,
+        *,
+        low_count: int,
+        watch_count: int,
+        worst_rssi: float | None,
+        alert_threshold: int,
+        watch_threshold: int,
+        consecutive_polls: int,
+    ) -> None:
+        """Create/update persistent alert for sustained low RSSI."""
+        worst_text = "unknown" if worst_rssi is None else f"{worst_rssi:.1f}"
+        persistent_notification.async_create(
+            self._hass,
+            message=(
+                f"{self._entry_title} has {low_count} module(s) below RSSI {alert_threshold} "
+                f"after {consecutive_polls} consecutive poll(s). "
+                f"{watch_count} additional module(s) are in watch range "
+                f"({alert_threshold}-{watch_threshold - 1}). "
+                f"Worst observed RSSI: {worst_text}. "
+                "Check gateway placement or add coverage."
+            ),
+            title=f"{MANUFACTURER}: Low RSSI alert",
+            notification_id=self.low_rssi_alert_notification_id,
+        )
+
+    async def async_clear_low_rssi_alert(self) -> None:
+        """Dismiss low-RSSI alert notification."""
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.low_rssi_alert_notification_id,
         )
