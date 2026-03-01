@@ -25,7 +25,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 
 ## Installation
 
-### Manual (first-phase recommended)
+### Manual
 
 1. Open your Home Assistant configuration directory.
 2. Create `custom_components/tigo_energy/` if it does not exist.
@@ -34,9 +34,9 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 5. Go to **Settings > Devices & Services > Add Integration**.
 6. Search for **Tigo Energy** and start setup.
 
-### HACS custom repository (optional)
+### HACS custom repository
 
-You can add this repository as a custom integration source in HACS now. Default-store listing is planned after wider validation.
+You can add this repository as a custom integration source in HACS.
 
 ## Configuration Flow
 
@@ -115,12 +115,6 @@ pip install -r requirements_dev.txt
 ruff check .
 pytest -q
 ```
-
-## Roadmap
-
-- HACS default-store submission
-- System subset selection in onboarding (between single and all-systems modes)
-- Additional diagnostics and repair flows
 
 ## License
 
