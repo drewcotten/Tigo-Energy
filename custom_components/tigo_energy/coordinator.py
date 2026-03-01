@@ -320,6 +320,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             start=window_start,
             end=window_end,
             metric="Pin",
+            query_tz=naive_tz,
         )
         primary = parse_tigo_aggregate_csv(
             primary_csv,
@@ -337,6 +338,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             start=fallback_start,
             end=window_end,
             metric="Pin",
+            query_tz=naive_tz,
         )
         fallback = parse_tigo_aggregate_csv(
             fallback_csv,
@@ -602,6 +604,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             start=window_start,
             end=window_end,
             metric=metric,
+            query_tz=naive_tz,
         )
         primary = parse_tigo_aggregate_csv(
             primary_csv,
@@ -619,6 +622,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             start=fallback_start,
             end=window_end,
             metric=metric,
+            query_tz=naive_tz,
         )
         fallback = parse_tigo_aggregate_csv(
             fallback_csv,

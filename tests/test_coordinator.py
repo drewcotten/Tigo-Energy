@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -83,6 +84,41 @@ async def test_summary_coordinator_fetches_system_and_sources(hass):
     assert system.system_data_is_stale is False
 
 
+async def test_summary_coordinator_uses_system_timezone_for_combined_queries(hass):
+    """Combined telemetry freshness query should be normalized using system timezone."""
+    now = datetime.now(UTC)
+    telemetry = now - timedelta(minutes=8)
+
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.return_value = [{"system_id": 1001, "name": "Site One"}]
+    mock_client.async_get_system.return_value = {"name": "Site One", "timezone": "America/Denver"}
+    mock_client.async_get_summary.return_value = {
+        "last_power_dc": 1200,
+        "updated_on": now.isoformat(),
+    }
+    mock_client.async_get_sources.return_value = [
+        {"source_id": "src-1", "name": "CCA", "last_checkin": now.isoformat()}
+    ]
+    mock_client.async_get_combined_csv.return_value = (
+        "Datetime,combined\n"
+        f"{telemetry.strftime('%Y/%m/%d %H:%M:%S')},1100\n"
+    )
+
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={},
+    )
+
+    await coordinator.async_refresh()
+
+    kwargs = mock_client.async_get_combined_csv.await_args.kwargs
+    assert str(kwargs["query_tz"]) == "America/Denver"
+
+
 async def test_summary_coordinator_critical_lag_notifies_after_debounce(hass):
     """Critical telemetry lag should notify only after configured consecutive polls."""
     now = datetime.now(UTC)
@@ -158,6 +194,31 @@ async def test_module_coordinator_dedupes_older_points(hass):
     second_snapshot = coordinator.data
     assert second_snapshot.dedupe_ignored_points > 0
     assert second_snapshot.points_by_key[(1001, "mod1", "Pin")].value == 110
+
+
+async def test_module_coordinator_uses_system_timezone_for_aggregate_queries(hass):
+    """Module telemetry queries should be normalized using system timezone."""
+    now = datetime.now(UTC).astimezone(ZoneInfo("America/Denver"))
+    csv_text = (
+        "Datetime,mod1\n"
+        f"{now.strftime('%Y/%m/%d %H:%M:%S')},100\n"
+    )
+
+    mock_client = AsyncMock()
+    mock_client.async_get_aggregate_csv.return_value = csv_text
+
+    coordinator = TigoModuleCoordinator(
+        hass=hass,
+        client=mock_client,
+        summary_coordinator=DummySummary(timezone="America/Denver"),
+        options={},
+    )
+
+    await coordinator.async_refresh()
+
+    assert mock_client.async_get_aggregate_csv.await_count == 4
+    for call in mock_client.async_get_aggregate_csv.await_args_list:
+        assert str(call.kwargs["query_tz"]) == "America/Denver"
 
 
 async def test_module_coordinator_uses_empty_window_fallback(hass):

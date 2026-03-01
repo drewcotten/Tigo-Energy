@@ -42,7 +42,7 @@ What to expect:
 How this integration handles it:
 
 - Polls with a lag-aware trailing window instead of asking only for "now".
-- Excludes very recent buckets (`recent_cutoff_minutes`) to avoid unstable edge data.
+- Uses `recent_cutoff_minutes` as an optional operator control (default `0` = no intentional cutoff).
 - Uses rolling backfill (`backfill_window_minutes`) so late-arriving data is picked up.
 - Retries once with a wider lookback if short-window results are empty.
 - Marks data as stale via attributes/diagnostics when data age exceeds `stale_threshold_seconds`.
@@ -104,7 +104,7 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - `enable_persistent_notifications` (default `true`, also selectable during onboarding)
 - `stale_threshold_seconds` (default `1800`)
 - `backfill_window_minutes` (default `120`)
-- `recent_cutoff_minutes` (default `20`)
+- `recent_cutoff_minutes` (default `0`)
 - `rssi_watch_threshold` (default `120`)
 - `rssi_alert_threshold` (default `80`)
 - `rssi_alert_consecutive_polls` (default `3`)
@@ -180,7 +180,7 @@ This integration uses a lag-aware strategy:
 
 - Poll summary/source data at configured cadence
 - For module data, query a rolling trailing window
-- Exclude very recent minutes (`recent_cutoff_minutes`) to avoid unstable edge data
+- Optional: set `recent_cutoff_minutes` above `0` if your site/API needs a guard band
 - If a short window returns empty telemetry, retry once with a wider lookback and local filter
 - Drop future CSV bucket rows more than 5 minutes ahead
 - Dedupe repeated/late-arriving points
@@ -204,7 +204,7 @@ Timestamp handling rules:
 - **Low RSSI alert**: a Home Assistant persistent notification appears when low RSSI persists for the configured debounce window (`rssi_alert_consecutive_polls`) and auto-clears when no modules remain below `rssi_alert_threshold`.
 - **Telemetry lag alert**: a Home Assistant persistent notification appears when heartbeat-vs-telemetry lag is critical (`>=45m`) for 2 consecutive summary polls and clears when critical lag resolves.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
-- **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` and `recent_cutoff_minutes`.
+- **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
 - **Too many entities**: disable module telemetry or increase module poll interval.
 
 ## Development
