@@ -6,6 +6,7 @@ import asyncio
 import base64
 import csv
 import random
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
 from email.utils import parsedate_to_datetime
@@ -71,6 +72,9 @@ class ParsedAggregateCsv:
     rows_by_module: dict[str, list[tuple[datetime, float]]]
     future_rows_dropped: int = 0
     invalid_timestamp_rows: int = 0
+
+
+MODULE_METRICS = frozenset({"pin", "vin", "iin", "rssi"})
 
 
 class TigoApiClient:
@@ -198,7 +202,7 @@ class TigoApiClient:
             "end": _format_query_timestamp(end, query_tz=query_tz),
             "level": "minute",
             "param": metric,
-            "header": "id",
+            "header": "key",
             "sensors": "true",
         }
         return await self._async_request_text("GET", "/data/aggregate", params=params)
@@ -471,6 +475,7 @@ def parse_tigo_aggregate_csv(
             col = column.strip()
             if col.lower() in {"datetime", "date", "time", "ts", "timestamp"}:
                 continue
+            module_key = _normalize_module_column(col)
             if raw_value in (None, ""):
                 continue
             try:
@@ -478,7 +483,7 @@ def parse_tigo_aggregate_csv(
             except (TypeError, ValueError):
                 continue
 
-            rows.setdefault(col, []).append((timestamp, numeric))
+            rows.setdefault(module_key, []).append((timestamp, numeric))
 
     return ParsedAggregateCsv(
         rows_by_module=rows,
@@ -521,6 +526,29 @@ def _extract_login_fields(
             expires_at = parse_tigo_timestamp(candidate_expires)
 
     return token, user_id, expires_at
+
+
+def _normalize_module_column(column: str) -> str:
+    """Normalize aggregate CSV column names to semantic module labels.
+
+    Examples:
+    - ``89287797`` -> ``89287797`` (id header fallback)
+    - ``04C05B800ACE.panels.A1_Vin`` -> ``A1``
+    - ``A1_Vin`` -> ``A1``
+    """
+    text = column.strip()
+    if not text:
+        return column
+
+    panels_match = re.search(r"\.panels\.([^.]+)$", text, flags=re.IGNORECASE)
+    token = panels_match.group(1) if panels_match else text.rsplit(".", 1)[-1]
+
+    if "_" in token:
+        stem, suffix = token.rsplit("_", 1)
+        if suffix.lower() in MODULE_METRICS and stem:
+            token = stem
+
+    return token or text
 
 
 def _retry_delay_seconds(response: ClientResponse, attempt: int) -> float:

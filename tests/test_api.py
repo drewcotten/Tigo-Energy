@@ -18,6 +18,7 @@ from custom_components.tigo_energy.api import (
     TigoAuthCredentials,
     _format_query_timestamp,
     _retry_delay_seconds,
+    parse_tigo_aggregate_csv,
     parse_tigo_timestamp,
 )
 
@@ -287,6 +288,35 @@ async def test_combined_csv_falls_back_to_legacy_params(hass):
     assert params["level"] == "minute"
     assert params["param"] == "Pin"
     assert params["header"] == "id"
+
+
+async def test_aggregate_csv_uses_key_header(hass):
+    """Aggregate telemetry request should request semantic key headers."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+    client._async_request_text = AsyncMock(return_value="Datetime,A1_Pin\n")
+
+    await client.async_get_aggregate_csv(
+        system_id=1001,
+        start=datetime(2026, 3, 1, 20, 0, 0, tzinfo=UTC),
+        end=datetime(2026, 3, 1, 21, 0, 0, tzinfo=UTC),
+        metric="Pin",
+    )
+
+    params = client._async_request_text.await_args.kwargs["params"]
+    assert params["header"] == "key"
+
+
+def test_parse_aggregate_csv_normalizes_semantic_module_labels():
+    """Key-header module columns should normalize to semantic labels like A1/B12."""
+    parsed = parse_tigo_aggregate_csv(
+        "Datetime,04C05B800ACE.panels.A1_Vin,04C05B800ACE.panels.B12_Vin\n"
+        "2026/03/01 12:07:00,34.1,35.2\n",
+        naive_tz=ZoneInfo("America/Denver"),
+    )
+
+    assert "A1" in parsed.rows_by_module
+    assert "B12" in parsed.rows_by_module
+    assert "04C05B800ACE.panels.A1_Vin" not in parsed.rows_by_module
 
 
 def test_parse_tigo_timestamp_slash_format_uses_naive_timezone():

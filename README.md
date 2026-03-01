@@ -136,12 +136,14 @@ These are the exact Home Assistant sensor names created by this integration.
 - Gateway count
 - Source serial
 
-### Module device (`Module <module_id>`, opt-in)
+### Module device (`Module <module_label>`, opt-in)
 
 - Module input power
 - Module input voltage
 - Module input current
 - Module RSSI
+
+When available, module devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`). If a semantic label is not present, the integration falls back to module ID-style naming.
 
 ### Additional system diagnostics (when module telemetry is enabled)
 
