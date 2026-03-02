@@ -56,7 +56,7 @@ Collision note:
 - PV-Off active -> `binary_sensor.system_name_pv_off_active`
 - String shutdown active -> `binary_sensor.system_name_string_shutdown_active`
 
-## Panel Sensors (sample)
+## Panel Sensors (sample, `enable_panel_telemetry=true`)
 
 ### `System_Name Panel A1`
 
@@ -79,7 +79,7 @@ Collision note:
 - Input current -> `sensor.system_<system_id>_panel_a3_iin`
 - RSSI -> `sensor.system_<system_id>_panel_a3_rssi`
 
-## Array Sensors (sample)
+## Array Sensors (sample, `enable_array_telemetry=true`)
 
 ### `System_Name Array A`
 
@@ -99,7 +99,7 @@ Collision note:
 - Array reporting module count -> `sensor.system_<system_id>_array_string_57810_array_reporting_module_count`
 - Array reporting coverage -> `sensor.system_<system_id>_array_string_57810_array_reporting_coverage`
 
-## RSSI Aggregate Sensors (module telemetry enabled)
+## RSSI Aggregate Sensors (`enable_array_telemetry=true`)
 
 - Low RSSI module count -> `sensor.system_name_low_rssi_module_count`
 - Watch RSSI module count -> `sensor.system_name_watch_rssi_module_count`

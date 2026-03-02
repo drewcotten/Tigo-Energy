@@ -30,7 +30,8 @@ No YAML is required.
 ## Features
 
 - Easy setup from Home Assistant UI: add your Tigo account once, then add each system with **Add system**.
-- Optional panel details: per-panel input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus per-array rollup sensors.
+- Array telemetry by default: per-array rollup sensors with power, voltage/current diagnostics, RSSI stats, and reporting coverage.
+- Optional panel details: per-panel input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`).
 - Clear system overview: current power and daily, YTD, and lifetime energy.
 - Source/gateway health tracking: last check-in, control state, firmware version, and gateway count.
 - Read-only safety and alert visibility: `PV-Off active`, `String shutdown active`, and active alert summary sensors.
@@ -113,7 +114,10 @@ The integration setup flow is:
 5. Set initial polling intervals in seconds:
    - `summary_poll_seconds` (default `60`)
    - `module_poll_seconds` (default `300`)
-6. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
+6. Choose telemetry scope:
+   - `enable_array_telemetry` (default `on`)
+   - `enable_panel_telemetry` (default `off`)
+   The legacy option key `enable_module_telemetry` is still supported and maps to panel telemetry.
 7. Choose notification behavior:
    - Master toggle for persistent notifications
    - Per-notification toggles (connection, low RSSI, telemetry lag, PV-Off, string shutdown, active-alert summary)
@@ -157,8 +161,10 @@ Timestamp handling rules:
 All options are configurable in **Settings > Devices & Services > Tigo Energy > Configure**:
 
 - `summary_poll_seconds` (default `60`): Poll interval for system/source summary sensors.
-- `module_poll_seconds` (default `300`): Poll interval for panel and array telemetry sensors.
-- `enable_module_telemetry` (default `false`, also selectable during onboarding): Enable per-panel `Pin`/`Vin`/`Iin`/`RSSI` telemetry and array rollups.
+- `module_poll_seconds` (default `300`): Poll interval for array/panel telemetry sensors.
+- `enable_array_telemetry` (default `true`, selectable during onboarding): Enable array telemetry sensors/devices (recommended default).
+- `enable_panel_telemetry` (default `false`, selectable during onboarding): Enable per-panel `Pin`/`Vin`/`Iin`/`RSSI` telemetry sensors/devices.
+- `enable_module_telemetry` (legacy alias): Backward-compatible alias for `enable_panel_telemetry`.
 - `enable_persistent_notifications` (default `true`, master switch): Global on/off for integration-created persistent notifications.
 - `notify_connection_issues` (default `true`): Notify when API/setup connectivity fails and when it recovers.
 - `notify_low_rssi` (default `false`): Notify on sustained low panel RSSI based on thresholds/debounce.
@@ -182,8 +188,10 @@ These are the exact Home Assistant sensor names created by this integration.
 
 Entity footprint planning:
 
-- Module telemetry off: 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors. Add 5 sensors per additional source.
-- Module telemetry on: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`), 3 RSSI aggregate sensors per system, and 15 array sensors per detected array/string.
+- Array ON, Panel OFF (new default): 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors, plus 3 RSSI aggregate sensors per system and 15 array sensors per detected array/string. Add 5 sensors per additional source.
+- Array ON, Panel ON: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`) on top of the default footprint.
+- Array OFF, Panel ON: panel-only module telemetry (4 panel sensors per panel), without array or RSSI aggregate sensors.
+- Array OFF, Panel OFF: no module-derived panel/array/RSSI entities.
 
 ### System device (`<System Name>`)
 
@@ -202,7 +210,7 @@ Entity footprint planning:
 - Latest alert code
 - Latest alert time
 
-System entities/devices are created per configured system subentry, including cases where module telemetry is discovered before full summary payloads are available.
+System entities/devices are created per configured system subentry, including cases where telemetry data arrives before full summary payloads are available.
 
 ### System binary sensors (`<System Name>`)
 
@@ -217,7 +225,7 @@ System entities/devices are created per configured system subentry, including ca
 - Gateway count
 - Source serial
 
-### Array device (`<System Name> Array <array_label>`, module telemetry enabled)
+### Array device (`<System Name> Array <array_label>`, array telemetry enabled)
 
 - Array power
 - Array voltage
@@ -235,7 +243,7 @@ System entities/devices are created per configured system subentry, including ca
 - Array reporting module count
 - Array reporting coverage
 
-### Panel device (`<System Name> Panel <panel_label>`, opt-in)
+### Panel device (`<System Name> Panel <panel_label>`, panel telemetry opt-in)
 
 - Input power
 - Input voltage
@@ -251,7 +259,7 @@ When available, panel devices/entities use Tigo semantic labels from aggregate k
 For multi-system accounts, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
 Panel entities are created from Tigo topology/inventory labels and remain present regardless of time of day; when no recent telemetry point exists (for example overnight), panel sensor values show as unknown until new points arrive.
 
-### Additional system diagnostics (when module telemetry is enabled)
+### Additional system diagnostics (when array telemetry is enabled)
 
 - Low RSSI module count
 - Watch RSSI module count
@@ -323,7 +331,7 @@ The integration can suppress data-quality alert escalation at night while keepin
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
 - **Module names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.
-- **Too many entities**: disable module telemetry or increase module poll interval.
+- **Too many entities**: disable panel telemetry and/or array telemetry, or increase module poll interval.
 
 ## Credential Storage and Security
 

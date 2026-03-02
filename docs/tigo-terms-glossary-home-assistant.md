@@ -12,16 +12,17 @@ Notes:
 
 - Entity IDs are dynamically generated from config entry/system/source/panel context.
 - Sensor names below reference translation keys defined by the integration.
-- Panel telemetry sensors exist only when `enable_module_telemetry` is enabled.
+- Array telemetry sensors exist when `enable_array_telemetry` is enabled (default `true`).
+- Panel telemetry sensors exist only when `enable_panel_telemetry` is enabled (default `false`).
 
 ## Telemetry and Metrics
 
 | Tigo term | Home Assistant mapping | Exposed | Notes |
 |---|---|---|---|
-| `Pin` | `module_pin` | Yes (module telemetry on) | Per-module input power sensor (W). |
-| `Vin` | `module_vin` | Yes (module telemetry on) | Per-module input voltage sensor (V). |
-| `Iin` | `module_iin` | Yes (module telemetry on) | Per-module input current sensor (A). |
-| `RSSI` | `module_rssi`, `low_rssi_module_count`, `watch_rssi_module_count`, `worst_module_rssi` | Yes (module telemetry on) | Per-module RSSI plus system-level RSSI aggregate diagnostics. |
+| `Pin` | `module_pin`, `array_power` | Yes (panel on / array on) | Panel input power (W) and derived per-array total power. |
+| `Vin` | `module_vin`, `array_voltage`, `array_voltage_average`, `array_voltage_min`, `array_voltage_max` | Yes (panel on / array on) | Panel voltage and derived per-array voltage diagnostics. |
+| `Iin` | `module_iin`, `array_current_average`, `array_current_min`, `array_current_max` | Yes (panel on / array on) | Panel current and derived per-array current diagnostics. |
+| `RSSI` | `module_rssi`, `array_rssi_*`, `low_rssi_module_count`, `watch_rssi_module_count`, `worst_module_rssi` | Yes (panel on / array on) | Panel RSSI plus array/system RSSI diagnostics. |
 | `Combined Pin` (`/data/combined?param=Pin`) | `telemetry_lag_minutes` (derived), `heartbeat_age_minutes` (derived) | Yes (derived diagnostics) | Combined Pin buckets drive telemetry freshness lag calculations. |
 | `Datetime` (telemetry rows) | Internal parsing input | No (raw) | Parsed as site-local bucket time (`system timezone -> HA timezone -> UTC`). |
 | `param` | Internal request parameter | No | Metric selector for aggregate/combined calls. |

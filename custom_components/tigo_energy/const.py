@@ -24,6 +24,11 @@ ENTRY_MODE_ALL_SYSTEMS: Final = "all_systems"
 
 OPT_SUMMARY_POLL_SECONDS: Final = "summary_poll_seconds"
 OPT_MODULE_POLL_SECONDS: Final = "module_poll_seconds"
+# Array telemetry controls derived per-array sensors/devices from module snapshots.
+OPT_ENABLE_ARRAY_TELEMETRY: Final = "enable_array_telemetry"
+# Panel telemetry controls per-panel entities/devices.
+OPT_ENABLE_PANEL_TELEMETRY: Final = "enable_panel_telemetry"
+# Legacy alias kept for backward compatibility; mirrors panel telemetry.
 OPT_ENABLE_MODULE_TELEMETRY: Final = "enable_module_telemetry"
 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: Final = "enable_persistent_notifications"
 OPT_NOTIFY_CONNECTION_ISSUES: Final = "notify_connection_issues"
@@ -45,6 +50,8 @@ OPT_RSSI_ALERT_CONSECUTIVE_POLLS: Final = "rssi_alert_consecutive_polls"
 
 DEFAULT_SUMMARY_POLL_SECONDS: Final = 60
 DEFAULT_MODULE_POLL_SECONDS: Final = 300
+DEFAULT_ENABLE_ARRAY_TELEMETRY: Final = True
+DEFAULT_ENABLE_PANEL_TELEMETRY: Final = False
 DEFAULT_ENABLE_MODULE_TELEMETRY: Final = False
 DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS: Final = True
 DEFAULT_NOTIFY_CONNECTION_ISSUES: Final = True

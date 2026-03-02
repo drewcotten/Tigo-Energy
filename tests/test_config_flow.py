@@ -22,7 +22,9 @@ from custom_components.tigo_energy.const import (
     ENTRY_MODE_ALL_SYSTEMS,
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    OPT_ENABLE_ARRAY_TELEMETRY,
     OPT_ENABLE_MODULE_TELEMETRY,
+    OPT_ENABLE_PANEL_TELEMETRY,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
@@ -83,7 +85,8 @@ async def test_config_flow_single_system_success(hass):
             {
                 OPT_SUMMARY_POLL_SECONDS: 60,
                 OPT_MODULE_POLL_SECONDS: 300,
-                OPT_ENABLE_MODULE_TELEMETRY: True,
+                OPT_ENABLE_ARRAY_TELEMETRY: True,
+                OPT_ENABLE_PANEL_TELEMETRY: True,
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: True,
                 OPT_NOTIFY_CONNECTION_ISSUES: True,
                 OPT_NOTIFY_LOW_RSSI: False,
@@ -108,6 +111,8 @@ async def test_config_flow_single_system_success(hass):
     assert subentry["data"]["system_id"] == 1001
     assert result["options"][OPT_SUMMARY_POLL_SECONDS] == 60
     assert result["options"][OPT_MODULE_POLL_SECONDS] == 300
+    assert result["options"][OPT_ENABLE_ARRAY_TELEMETRY] is True
+    assert result["options"][OPT_ENABLE_PANEL_TELEMETRY] is True
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is True
     assert result["options"][OPT_ENABLE_PERSISTENT_NOTIFICATIONS] is True
     assert result["options"][OPT_NOTIFY_CONNECTION_ISSUES] is True
@@ -156,7 +161,8 @@ async def test_config_flow_all_systems_success(hass):
             {
                 OPT_SUMMARY_POLL_SECONDS: 75,
                 OPT_MODULE_POLL_SECONDS: 360,
-                OPT_ENABLE_MODULE_TELEMETRY: False,
+                OPT_ENABLE_ARRAY_TELEMETRY: False,
+                OPT_ENABLE_PANEL_TELEMETRY: False,
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: False,
                 OPT_NOTIFY_CONNECTION_ISSUES: False,
                 OPT_NOTIFY_LOW_RSSI: False,
@@ -178,6 +184,8 @@ async def test_config_flow_all_systems_success(hass):
     }
     assert result["options"][OPT_SUMMARY_POLL_SECONDS] == 75
     assert result["options"][OPT_MODULE_POLL_SECONDS] == 360
+    assert result["options"][OPT_ENABLE_ARRAY_TELEMETRY] is False
+    assert result["options"][OPT_ENABLE_PANEL_TELEMETRY] is False
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is False
     assert result["options"][OPT_ENABLE_PERSISTENT_NOTIFICATIONS] is False
     assert result["options"][OPT_NOTIFY_CONNECTION_ISSUES] is False

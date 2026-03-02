@@ -9,7 +9,11 @@ from unittest.mock import Mock
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.tigo_energy.const import DOMAIN
+from custom_components.tigo_energy.const import (
+    DOMAIN,
+    OPT_ENABLE_ARRAY_TELEMETRY,
+    OPT_ENABLE_PANEL_TELEMETRY,
+)
 from custom_components.tigo_energy.models import (
     AlertRecord,
     ArraySnapshot,
@@ -30,6 +34,7 @@ from custom_components.tigo_energy.sensor import (
     TigoArraySensor,
     TigoEntityManager,
     TigoModuleSensor,
+    TigoRssiAggregateSensor,
     TigoSystemSensor,
 )
 
@@ -104,7 +109,16 @@ async def test_telemetry_lag_sensor_exposes_status_attributes(hass):
         ),
     )
 
-    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tigo",
+        data={},
+        options={
+            OPT_ENABLE_ARRAY_TELEMETRY: True,
+            OPT_ENABLE_PANEL_TELEMETRY: True,
+        },
+        entry_id="entry-1",
+    )
     entry.add_to_hass(hass)
 
     coordinator = DataUpdateCoordinator(
@@ -188,7 +202,16 @@ async def test_heartbeat_age_sensor_value_is_minutes(hass):
         ),
     )
 
-    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tigo",
+        data={},
+        options={
+            OPT_ENABLE_ARRAY_TELEMETRY: True,
+            OPT_ENABLE_PANEL_TELEMETRY: True,
+        },
+        entry_id="entry-1",
+    )
     entry.add_to_hass(hass)
 
     coordinator = DataUpdateCoordinator(
@@ -272,7 +295,16 @@ async def test_alert_sensors_expose_latest_alert_attributes(hass):
         ),
     )
 
-    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tigo",
+        data={},
+        options={
+            OPT_ENABLE_ARRAY_TELEMETRY: True,
+            OPT_ENABLE_PANEL_TELEMETRY: True,
+        },
+        entry_id="entry-1",
+    )
     entry.add_to_hass(hass)
     coordinator = DataUpdateCoordinator(
         hass,
@@ -983,7 +1015,16 @@ async def test_module_entities_created_from_summary_inventory_without_points(has
         ),
     )
 
-    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tigo",
+        data={},
+        options={
+            OPT_ENABLE_ARRAY_TELEMETRY: True,
+            OPT_ENABLE_PANEL_TELEMETRY: True,
+        },
+        entry_id="entry-1",
+    )
     entry.add_to_hass(hass)
 
     summary_coordinator = DataUpdateCoordinator(
@@ -1026,3 +1067,207 @@ async def test_module_entities_created_from_summary_inventory_without_points(has
     )
     assert pin_a1.available is True
     assert pin_a1.native_value is None
+
+
+async def test_entity_manager_array_on_panel_off_creates_array_not_panel(hass):
+    """Array-enabled/panel-disabled should create array + RSSI aggregate entities only."""
+    now = datetime.now(UTC)
+    system_snapshot = SystemSnapshot(
+        system_id=1001,
+        name="Site One",
+        timezone="UTC",
+        address=None,
+        latitude=None,
+        longitude=None,
+        turn_on_date="2025-08-24",
+        power_rating=5000.0,
+        summary={"last_power_dc": 0},
+        sources=[],
+        freshest_timestamp=now,
+        system_data_age_seconds=60.0,
+        system_data_is_stale=False,
+        latest_source_checkin=now,
+        latest_non_empty_telemetry_timestamp=now,
+        heartbeat_age_seconds=60.0,
+        telemetry_lag_seconds=60.0,
+        telemetry_lag_status="ok",
+        alert_state=_default_alert_state(),
+        module_label_map={"89287797": "A1"},
+        arrays={
+            "string_1": ArraySnapshot(
+                array_id="string_1",
+                name="Array A",
+                short_label="A",
+                string_id=1,
+                mppt_label="MPPT 1",
+                inverter_label="Inverter 1",
+                panel_labels=("A1",),
+            )
+        },
+        module_array_map={"A1": "string_1"},
+    )
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={1001: system_snapshot},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={(1001, "A1", "Pin"): ModulePoint(1001, "A1", "Pin", 120.0, now)},
+        by_system={1001: {"A1": {"Pin": ModulePoint(1001, "A1", "Pin", 120.0, now)}}},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tigo",
+        data={},
+        options={
+            OPT_ENABLE_ARRAY_TELEMETRY: True,
+            OPT_ENABLE_PANEL_TELEMETRY: False,
+        },
+        entry_id="entry-array-only",
+    )
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+    manager = TigoEntityManager(entry=entry, runtime=runtime, async_add_entities=Mock())
+    entities = manager.collect_initial_entities()
+
+    assert any(isinstance(entity, TigoArraySensor) for entity in entities)
+    assert any(isinstance(entity, TigoRssiAggregateSensor) for entity in entities)
+    assert not any(isinstance(entity, TigoModuleSensor) for entity in entities)
+
+
+async def test_entity_manager_array_off_panel_on_creates_panel_not_array(hass):
+    """Array-disabled/panel-enabled should create panel entities only."""
+    now = datetime.now(UTC)
+    system_snapshot = SystemSnapshot(
+        system_id=1001,
+        name="Site One",
+        timezone="UTC",
+        address=None,
+        latitude=None,
+        longitude=None,
+        turn_on_date="2025-08-24",
+        power_rating=5000.0,
+        summary={"last_power_dc": 0},
+        sources=[],
+        freshest_timestamp=now,
+        system_data_age_seconds=60.0,
+        system_data_is_stale=False,
+        latest_source_checkin=now,
+        latest_non_empty_telemetry_timestamp=now,
+        heartbeat_age_seconds=60.0,
+        telemetry_lag_seconds=60.0,
+        telemetry_lag_status="ok",
+        alert_state=_default_alert_state(),
+        module_label_map={"89287797": "A1"},
+        arrays={
+            "string_1": ArraySnapshot(
+                array_id="string_1",
+                name="Array A",
+                short_label="A",
+                string_id=1,
+                mppt_label="MPPT 1",
+                inverter_label="Inverter 1",
+                panel_labels=("A1",),
+            )
+        },
+        module_array_map={"A1": "string_1"},
+    )
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={1001: system_snapshot},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={(1001, "A1", "Pin"): ModulePoint(1001, "A1", "Pin", 120.0, now)},
+        by_system={1001: {"A1": {"Pin": ModulePoint(1001, "A1", "Pin", 120.0, now)}}},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Tigo",
+        data={},
+        options={
+            OPT_ENABLE_ARRAY_TELEMETRY: False,
+            OPT_ENABLE_PANEL_TELEMETRY: True,
+        },
+        entry_id="entry-panel-only",
+    )
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+    manager = TigoEntityManager(entry=entry, runtime=runtime, async_add_entities=Mock())
+    entities = manager.collect_initial_entities()
+
+    assert any(isinstance(entity, TigoModuleSensor) for entity in entities)
+    assert not any(isinstance(entity, TigoArraySensor) for entity in entities)
+    assert not any(isinstance(entity, TigoRssiAggregateSensor) for entity in entities)

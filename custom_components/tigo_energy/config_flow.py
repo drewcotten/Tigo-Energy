@@ -18,7 +18,9 @@ from .const import (
     CONF_ENTRY_MODE,
     CONF_SYSTEM_ID,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
+    DEFAULT_ENABLE_ARRAY_TELEMETRY,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
+    DEFAULT_ENABLE_PANEL_TELEMETRY,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
@@ -58,7 +60,9 @@ from .const import (
     MIN_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    OPT_ENABLE_ARRAY_TELEMETRY,
     OPT_ENABLE_MODULE_TELEMETRY,
+    OPT_ENABLE_PANEL_TELEMETRY,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
@@ -129,7 +133,8 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._systems: list[FlowSystemRecord] = []
         self._selected_entry_mode: str = ENTRY_MODE_SINGLE_SYSTEM
         self._selected_system_id: int | None = None
-        self._enable_module_telemetry: bool = DEFAULT_ENABLE_MODULE_TELEMETRY
+        self._enable_array_telemetry: bool = DEFAULT_ENABLE_ARRAY_TELEMETRY
+        self._enable_panel_telemetry: bool = DEFAULT_ENABLE_PANEL_TELEMETRY
         self._enable_persistent_notifications: bool = DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS
         self._notify_connection_issues: bool = DEFAULT_NOTIFY_CONNECTION_ISSUES
         self._notify_low_rssi: bool = DEFAULT_NOTIFY_LOW_RSSI
@@ -251,7 +256,8 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Choose module telemetry and initial polling rates."""
         if user_input is not None:
-            self._enable_module_telemetry = bool(user_input[OPT_ENABLE_MODULE_TELEMETRY])
+            self._enable_array_telemetry = bool(user_input[OPT_ENABLE_ARRAY_TELEMETRY])
+            self._enable_panel_telemetry = bool(user_input[OPT_ENABLE_PANEL_TELEMETRY])
             self._enable_persistent_notifications = bool(
                 user_input[OPT_ENABLE_PERSISTENT_NOTIFICATIONS]
             )
@@ -300,7 +306,9 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options={
                     OPT_SUMMARY_POLL_SECONDS: self._summary_poll_seconds,
                     OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
-                    OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
+                    OPT_ENABLE_ARRAY_TELEMETRY: self._enable_array_telemetry,
+                    OPT_ENABLE_PANEL_TELEMETRY: self._enable_panel_telemetry,
+                    OPT_ENABLE_MODULE_TELEMETRY: self._enable_panel_telemetry,
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
                     OPT_NOTIFY_CONNECTION_ISSUES: self._notify_connection_issues,
                     OPT_NOTIFY_LOW_RSSI: self._notify_low_rssi,
@@ -333,8 +341,12 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     default=self._module_poll_seconds,
                 ): _int_box_selector(MIN_MODULE_POLL_SECONDS, MAX_POLL_SECONDS),
                 vol.Required(
-                    OPT_ENABLE_MODULE_TELEMETRY,
-                    default=self._enable_module_telemetry,
+                    OPT_ENABLE_ARRAY_TELEMETRY,
+                    default=self._enable_array_telemetry,
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_PANEL_TELEMETRY,
+                    default=self._enable_panel_telemetry,
                 ): bool,
                 vol.Required(
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
@@ -588,6 +600,8 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 OPT_RSSI_WATCH_THRESHOLD: int(user_input[OPT_RSSI_WATCH_THRESHOLD]),
                 OPT_RSSI_ALERT_THRESHOLD: int(user_input[OPT_RSSI_ALERT_THRESHOLD]),
                 OPT_RSSI_ALERT_CONSECUTIVE_POLLS: int(user_input[OPT_RSSI_ALERT_CONSECUTIVE_POLLS]),
+                # Legacy compatibility key kept for older installs/tests.
+                OPT_ENABLE_MODULE_TELEMETRY: bool(user_input[OPT_ENABLE_PANEL_TELEMETRY]),
                 # Legacy compatibility key kept in options for older installs/tests.
                 OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: bool(
                     user_input[OPT_NOTIFY_PV_OFF]
@@ -604,6 +618,8 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 return self.async_create_entry(title="", data=clean_input)
 
         options = self._config_entry.options
+        legacy_panel_raw = options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)
+        legacy_panel_enabled = bool(legacy_panel_raw)
         legacy_alert_feed_raw = options.get(OPT_ENABLE_ALERT_FEED_NOTIFICATIONS)
         legacy_alert_feed_enabled = (
             bool(legacy_alert_feed_raw) if legacy_alert_feed_raw is not None else None
@@ -620,8 +636,22 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                     default=int(options.get(OPT_MODULE_POLL_SECONDS, DEFAULT_MODULE_POLL_SECONDS)),
                 ): _int_box_selector(MIN_MODULE_POLL_SECONDS, MAX_POLL_SECONDS),
                 vol.Required(
-                    OPT_ENABLE_MODULE_TELEMETRY,
-                    default=bool(options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)),
+                    OPT_ENABLE_ARRAY_TELEMETRY,
+                    default=bool(
+                        options.get(
+                            OPT_ENABLE_ARRAY_TELEMETRY,
+                            DEFAULT_ENABLE_ARRAY_TELEMETRY,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_PANEL_TELEMETRY,
+                    default=bool(
+                        options.get(
+                            OPT_ENABLE_PANEL_TELEMETRY,
+                            legacy_panel_enabled,
+                        )
+                    ),
                 ): bool,
                 vol.Required(
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,

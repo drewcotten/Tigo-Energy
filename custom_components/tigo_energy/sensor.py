@@ -52,6 +52,8 @@ from .const import (
     ATTR_TELEMETRY_LAG_GUARD_REASON,
     ATTR_TELEMETRY_LAG_STATUS,
     ATTR_TELEMETRY_LAG_STATUS_RAW,
+    DEFAULT_ENABLE_ARRAY_TELEMETRY,
+    DEFAULT_ENABLE_PANEL_TELEMETRY,
     DEFAULT_RSSI_ALERT_THRESHOLD,
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
@@ -59,6 +61,9 @@ from .const import (
     LAG_CRITICAL_MINUTES,
     LAG_WARNING_MINUTES,
     MANUFACTURER,
+    OPT_ENABLE_ARRAY_TELEMETRY,
+    OPT_ENABLE_MODULE_TELEMETRY,
+    OPT_ENABLE_PANEL_TELEMETRY,
     OPT_RSSI_ALERT_THRESHOLD,
     OPT_RSSI_WATCH_THRESHOLD,
     OPT_STALE_THRESHOLD_SECONDS,
@@ -405,10 +410,11 @@ class TigoEntityManager:
         entities.extend(self._new_system_entities(system_ids))
         entities.extend(self._new_source_entities(summary_data))
 
-        if module_data is not None:
+        if module_data is not None and self._array_telemetry_enabled():
             entities.extend(self._new_array_entities(summary_data))
-            entities.extend(self._new_module_entities(summary_data, module_data))
             entities.extend(self._new_rssi_aggregate_entities(system_ids))
+        if module_data is not None and self._panel_telemetry_enabled():
+            entities.extend(self._new_module_entities(summary_data, module_data))
 
         return entities
 
@@ -424,9 +430,9 @@ class TigoEntityManager:
         new_entities.extend(self._new_source_entities(data))
         if self._runtime.module_coordinator is not None:
             new_entities.extend(self._new_array_entities(data))
+            new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
             module_data = self._runtime.module_coordinator.data
             new_entities.extend(self._new_module_entities(data, module_data))
-            new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
             self._async_add_entities(new_entities)
 
@@ -488,6 +494,9 @@ class TigoEntityManager:
         summary_data: SummarySnapshot,
         module_data: ModuleSnapshot | None,
     ) -> list[SensorEntity]:
+        if not self._panel_telemetry_enabled():
+            return []
+
         new_entities: list[SensorEntity] = []
         known_modules_by_system: dict[int, set[str]] = {}
 
@@ -522,6 +531,8 @@ class TigoEntityManager:
 
     def _new_array_entities(self, data: SummarySnapshot) -> list[SensorEntity]:
         """Create per-array aggregate entities for systems."""
+        if not self._array_telemetry_enabled():
+            return []
         if self._runtime.module_coordinator is None:
             return []
 
@@ -546,6 +557,8 @@ class TigoEntityManager:
 
     def _new_rssi_aggregate_entities(self, system_ids: set[int]) -> list[SensorEntity]:
         """Create RSSI aggregate entities for systems."""
+        if not self._array_telemetry_enabled():
+            return []
         if self._runtime.module_coordinator is None:
             return []
 
@@ -584,6 +597,30 @@ class TigoEntityManager:
         if self._runtime.module_coordinator is None:
             return set()
         return set(self._runtime.module_coordinator.data.by_system)
+
+    def _array_telemetry_enabled(self) -> bool:
+        """Return whether per-array telemetry entities are enabled."""
+        return bool(
+            self._entry.options.get(
+                OPT_ENABLE_ARRAY_TELEMETRY,
+                DEFAULT_ENABLE_ARRAY_TELEMETRY,
+            )
+        )
+
+    def _panel_telemetry_enabled(self) -> bool:
+        """Return whether per-panel telemetry entities are enabled."""
+        legacy_panel_enabled = bool(
+            self._entry.options.get(
+                OPT_ENABLE_MODULE_TELEMETRY,
+                DEFAULT_ENABLE_PANEL_TELEMETRY,
+            )
+        )
+        return bool(
+            self._entry.options.get(
+                OPT_ENABLE_PANEL_TELEMETRY,
+                legacy_panel_enabled,
+            )
+        )
 
 
 class TigoBaseEntity(CoordinatorEntity, SensorEntity):

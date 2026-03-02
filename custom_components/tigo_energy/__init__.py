@@ -21,7 +21,9 @@ from .const import (
     CONF_SYSTEM_IDS,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
     DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    DEFAULT_ENABLE_ARRAY_TELEMETRY,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
+    DEFAULT_ENABLE_PANEL_TELEMETRY,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
@@ -44,7 +46,9 @@ from .const import (
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    OPT_ENABLE_ARRAY_TELEMETRY,
     OPT_ENABLE_MODULE_TELEMETRY,
+    OPT_ENABLE_PANEL_TELEMETRY,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
@@ -152,8 +156,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         allowed_system_ids=tracked_system_ids,
     )
 
+    module_polling_required = bool(
+        options[OPT_ENABLE_ARRAY_TELEMETRY] or options[OPT_ENABLE_PANEL_TELEMETRY]
+    )
+
     module_coordinator = None
-    if options[OPT_ENABLE_MODULE_TELEMETRY]:
+    if module_polling_required:
         module_coordinator = TigoModuleCoordinator(
             hass=hass,
             client=client,
@@ -181,6 +189,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         entry=entry,
         module_label_map_by_system=_module_label_map_by_system(summary_coordinator.data.systems),
     )
+    if not options[OPT_ENABLE_PANEL_TELEMETRY]:
+        await _async_remove_panel_entities_and_devices(hass=hass, entry=entry)
 
     runtime_data.unsub_update_listener = entry.add_update_listener(_async_options_updated)
     entry.runtime_data = runtime_data
@@ -208,6 +218,20 @@ async def _async_options_updated(hass: HomeAssistant, entry: TigoConfigEntry) ->
 
 def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
     """Return options merged with defaults."""
+    legacy_panel_raw = entry.options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)
+    legacy_panel_enabled = bool(legacy_panel_raw)
+    panel_telemetry_enabled = bool(
+        entry.options.get(
+            OPT_ENABLE_PANEL_TELEMETRY,
+            legacy_panel_enabled if legacy_panel_raw is not None else DEFAULT_ENABLE_PANEL_TELEMETRY,
+        )
+    )
+    array_telemetry_enabled = bool(
+        entry.options.get(
+            OPT_ENABLE_ARRAY_TELEMETRY,
+            DEFAULT_ENABLE_ARRAY_TELEMETRY,
+        )
+    )
     legacy_alert_feed_raw = entry.options.get(OPT_ENABLE_ALERT_FEED_NOTIFICATIONS)
     legacy_alert_feed_enabled = (
         bool(legacy_alert_feed_raw) if legacy_alert_feed_raw is not None else None
@@ -219,9 +243,9 @@ def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
         OPT_MODULE_POLL_SECONDS: int(
             entry.options.get(OPT_MODULE_POLL_SECONDS, DEFAULT_MODULE_POLL_SECONDS)
         ),
-        OPT_ENABLE_MODULE_TELEMETRY: bool(
-            entry.options.get(OPT_ENABLE_MODULE_TELEMETRY, DEFAULT_ENABLE_MODULE_TELEMETRY)
-        ),
+        OPT_ENABLE_ARRAY_TELEMETRY: array_telemetry_enabled,
+        OPT_ENABLE_PANEL_TELEMETRY: panel_telemetry_enabled,
+        OPT_ENABLE_MODULE_TELEMETRY: panel_telemetry_enabled,
         OPT_ENABLE_PERSISTENT_NOTIFICATIONS: bool(
             entry.options.get(
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
@@ -322,6 +346,55 @@ def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
             )
         ),
     }
+
+
+async def _async_remove_panel_entities_and_devices(
+    *,
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Remove panel entities/devices when panel telemetry is disabled."""
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    panel_unique_prefix = f"{entry.entry_id}_module_"
+
+    entity_entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    panel_entity_ids: list[str] = []
+    panel_device_ids: set[str] = set()
+
+    for entity_entry in entity_entries:
+        unique_id = entity_entry.unique_id or ""
+        if not unique_id.startswith(panel_unique_prefix):
+            continue
+        panel_entity_ids.append(entity_entry.entity_id)
+        if entity_entry.device_id:
+            panel_device_ids.add(entity_entry.device_id)
+
+    for entity_id in panel_entity_ids:
+        entity_registry.async_remove(entity_id)
+
+    if not panel_device_ids:
+        return
+
+    remaining_entities = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    remaining_device_ids = {
+        entity_entry.device_id
+        for entity_entry in remaining_entities
+        if entity_entry.device_id
+    }
+
+    for device_id in panel_device_ids:
+        if device_id in remaining_device_ids:
+            continue
+        device_entry = device_registry.async_get(device_id)
+        if device_entry is None:
+            continue
+        if not any(
+            domain == DOMAIN and str(identifier).startswith("module_")
+            for domain, identifier in device_entry.identifiers
+        ):
+            continue
+        device_registry.async_remove_device(device_id)
 
 
 def _configured_system_subentry_ids(

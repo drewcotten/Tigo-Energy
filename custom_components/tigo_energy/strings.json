@@ -26,11 +26,12 @@
       },
       "module_telemetry": {
         "title": "Module telemetry",
-        "description": "Set initial poll intervals (seconds), module telemetry, and notification behavior. Defaults are summary=60 and module=300. Tigo API documents a per-account rate cap of 100 requests/minute, so keep intervals conservative for multi-system accounts.",
+        "description": "Set initial poll intervals (seconds), telemetry scope, and notification behavior. Defaults are summary=60 and module=300. Tigo API documents a per-account rate cap of 100 requests/minute, so keep intervals conservative for multi-system accounts.",
         "data": {
           "summary_poll_seconds": "Summary poll interval (seconds)",
           "module_poll_seconds": "Module poll interval (seconds)",
-          "enable_module_telemetry": "Enable module-level telemetry",
+          "enable_array_telemetry": "Enable array telemetry (recommended)",
+          "enable_panel_telemetry": "Enable panel telemetry (optional)",
           "enable_persistent_notifications": "Enable persistent notifications (master switch)",
           "notify_connection_issues": "Connection issues",
           "notify_low_rssi": "Low RSSI",
@@ -72,7 +73,8 @@
         "data": {
           "summary_poll_seconds": "Summary poll interval (seconds)",
           "module_poll_seconds": "Module poll interval (seconds)",
-          "enable_module_telemetry": "Enable module-level telemetry",
+          "enable_array_telemetry": "Enable array telemetry (recommended)",
+          "enable_panel_telemetry": "Enable panel telemetry (optional)",
           "enable_persistent_notifications": "Enable persistent notifications (master switch)",
           "notify_connection_issues": "Connection issues",
           "notify_low_rssi": "Low RSSI",
