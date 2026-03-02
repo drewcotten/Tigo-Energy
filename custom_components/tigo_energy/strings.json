@@ -138,16 +138,16 @@
         "name": "Source serial"
       },
       "module_pin": {
-        "name": "Module input power"
+        "name": "Input power"
       },
       "module_vin": {
-        "name": "Module input voltage"
+        "name": "Input voltage"
       },
       "module_iin": {
-        "name": "Module input current"
+        "name": "Input current"
       },
       "module_rssi": {
-        "name": "Module RSSI"
+        "name": "RSSI"
       },
       "low_rssi_module_count": {
         "name": "Low RSSI module count"

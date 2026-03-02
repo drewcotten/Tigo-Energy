@@ -156,14 +156,15 @@ System entities/devices are created per tracked system in both `single_system` a
 - Gateway count
 - Source serial
 
-### Module device (`Module <module_label>`, opt-in)
+### Panel device (`<System Name> Panel <panel_label>`, opt-in)
 
-- Module input power
-- Module input voltage
-- Module input current
-- Module RSSI
+- Input power
+- Input voltage
+- Input current
+- RSSI
 
-When available, module devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`). If a semantic label is not present, the integration falls back to module ID-style naming.
+When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`). If a semantic label is not present, the integration falls back to module ID-style naming.
+For multi-system entries, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
 
 ### Additional system diagnostics (when module telemetry is enabled)
 

@@ -537,6 +537,103 @@ async def test_module_sensor_available_with_stale_point(hass):
     assert attrs["module_data_age_seconds"] > 0
 
 
+async def test_module_sensor_uses_system_scoped_panel_naming(hass):
+    """Module sensor should present panel naming and deterministic object id."""
+    now = datetime.now(UTC)
+
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={
+            1001: SystemSnapshot(
+                system_id=1001,
+                name="Site One",
+                timezone="UTC",
+                address=None,
+                latitude=None,
+                longitude=None,
+                turn_on_date="2025-08-24",
+                power_rating=5000.0,
+                summary={"last_power_dc": 1200},
+                sources=[],
+                freshest_timestamp=now,
+                system_data_age_seconds=60.0,
+                system_data_is_stale=False,
+                latest_source_checkin=now,
+                latest_non_empty_telemetry_timestamp=now,
+                heartbeat_age_seconds=60.0,
+                telemetry_lag_seconds=60.0,
+                telemetry_lag_status="ok",
+                alert_state=_default_alert_state(),
+                module_label_map={"89287797": "A1"},
+            )
+        },
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=60.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={
+            (1001, "A1", "Pin"): ModulePoint(
+                system_id=1001,
+                module_id="A1",
+                metric="Pin",
+                value=123.0,
+                timestamp=now,
+            )
+        },
+        by_system={},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+
+    sensor = TigoModuleSensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        module_id="A1",
+        metric="Pin",
+    )
+
+    assert sensor.device_info["name"] == "Site One Panel A1"
+    assert sensor._attr_suggested_object_id == "system_1001_panel_a1_pin"
+
+
 async def test_module_discovery_still_creates_system_entities(hass):
     """System sensors should still be created from module snapshot system ids."""
     now = datetime.now(UTC)

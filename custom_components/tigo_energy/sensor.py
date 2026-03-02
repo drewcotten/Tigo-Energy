@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,6 +60,8 @@ from .models import (
     SystemSnapshot,
     TigoRuntimeData,
 )
+
+OBJECT_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -678,14 +681,21 @@ class TigoModuleSensor(TigoBaseEntity):
         self._attr_native_unit_of_measurement = MODULE_METRIC_UNITS.get(metric)
         self._attr_device_class = MODULE_METRIC_DEVICE_CLASSES.get(metric)
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_suggested_object_id = _module_suggested_object_id(
+            system_id=system_id,
+            module_id=module_id,
+            metric=metric,
+        )
 
     @property
     def device_info(self) -> DeviceInfo:
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        system_name = system.name if system else f"System {self._system_id}"
         return DeviceInfo(
             identifiers={(DOMAIN, f"module_{self._system_id}_{self._module_id}")},
-            name=f"Module {self._module_id}",
+            name=f"{system_name} Panel {self._module_id}",
             manufacturer=MANUFACTURER,
-            model="Tigo Module",
+            model="Tigo Panel",
             via_device=(DOMAIN, f"system_{self._system_id}"),
         )
 
@@ -907,3 +917,16 @@ def _rssi_status_label(
 def _stale_threshold_seconds_from_entry(entry: ConfigEntry) -> int:
     """Return configured stale threshold in seconds."""
     return int(entry.options.get(OPT_STALE_THRESHOLD_SECONDS, DEFAULT_STALE_THRESHOLD_SECONDS))
+
+
+def _module_suggested_object_id(*, system_id: int, module_id: str, metric: str) -> str:
+    """Return deterministic object_id to prevent cross-system panel slug collisions."""
+    panel_token = _sanitize_object_token(module_id)
+    metric_token = _sanitize_object_token(metric)
+    return f"system_{system_id}_panel_{panel_token}_{metric_token}"
+
+
+def _sanitize_object_token(value: str) -> str:
+    """Sanitize one object-id token to lowercase ascii with underscores."""
+    normalized = OBJECT_TOKEN_PATTERN.sub("_", value.strip().lower()).strip("_")
+    return normalized or "unknown"
