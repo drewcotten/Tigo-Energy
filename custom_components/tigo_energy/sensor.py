@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +16,7 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -255,15 +256,30 @@ MODULE_METRIC_DEVICE_CLASSES: dict[str, SensorDeviceClass | None] = {
 async def async_setup_entry(
     hass,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up sensors from a config entry."""
     runtime: TigoRuntimeData = entry.runtime_data
-    entity_manager = TigoEntityManager(entry, runtime, async_add_entities)
+
+    def _async_add_grouped(entities: list[SensorEntity]) -> None:
+        groups: dict[str | None, list[SensorEntity]] = {}
+        for entity in entities:
+            system_id = getattr(entity, "_system_id", None)
+            subentry_id = (
+                runtime.system_subentry_ids.get(system_id)
+                if isinstance(system_id, int)
+                else None
+            )
+            groups.setdefault(subentry_id, []).append(entity)
+
+        for subentry_id, grouped_entities in groups.items():
+            async_add_entities(grouped_entities, config_subentry_id=subentry_id)
+
+    entity_manager = TigoEntityManager(entry, runtime, _async_add_grouped)
 
     initial_entities = entity_manager.collect_initial_entities()
     if initial_entities:
-        async_add_entities(initial_entities)
+        _async_add_grouped(initial_entities)
 
     entry.async_on_unload(
         runtime.summary_coordinator.async_add_listener(entity_manager.handle_summary_update)
@@ -282,7 +298,7 @@ class TigoEntityManager:
         self,
         entry: ConfigEntry,
         runtime: TigoRuntimeData,
-        async_add_entities: AddEntitiesCallback,
+        async_add_entities: Callable[[list[SensorEntity]], None],
     ) -> None:
         self._entry = entry
         self._runtime = runtime

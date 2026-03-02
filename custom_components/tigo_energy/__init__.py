@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+from types import MappingProxyType
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
     DOMAIN,
+    ENTRY_MODE_ALL_SYSTEMS,
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_MODULE_TELEMETRY,
@@ -41,6 +43,7 @@ from .const import (
     OPT_STALE_THRESHOLD_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
     PLATFORMS,
+    SUBENTRY_TYPE_SYSTEM,
 )
 from .coordinator import TigoModuleCoordinator, TigoSummaryCoordinator
 from .models import TigoRuntimeData
@@ -88,12 +91,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         if connection_notifier is not None:
             await connection_notifier.async_report_connection_recovered(CONNECTION_SOURCE_SETUP)
     entry_mode = entry.data.get(CONF_ENTRY_MODE, ENTRY_MODE_SINGLE_SYSTEM)
+    configured_system_ids = _configured_system_ids_from_subentries(entry)
 
-    configured_system_ids: set[int] = set()
-    if entry_mode == ENTRY_MODE_SINGLE_SYSTEM:
-        configured_system_ids = {int(entry.data[CONF_SYSTEM_ID])}
-    else:
-        configured_system_ids = {int(system_id) for system_id in entry.data.get(CONF_SYSTEM_IDS, [])}
+    # Backward compatibility: convert legacy single/all system entry data into system subentries.
+    if not configured_system_ids:
+        legacy_system_ids = _legacy_configured_system_ids(entry, entry_mode)
+        if legacy_system_ids:
+            await _async_create_system_subentries_from_legacy(
+                hass=hass,
+                entry=entry,
+                client=client,
+                system_ids=legacy_system_ids,
+            )
+            configured_system_ids = _configured_system_ids_from_subentries(entry)
+            if not configured_system_ids:
+                configured_system_ids = legacy_system_ids
 
     summary_coordinator = TigoSummaryCoordinator(
         hass=hass,
@@ -106,10 +118,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
     await summary_coordinator.async_config_entry_first_refresh()
 
     tracked_system_ids = set(summary_coordinator.data.systems)
-    if entry_mode != ENTRY_MODE_SINGLE_SYSTEM and not configured_system_ids:
+    if (
+        entry_mode == ENTRY_MODE_ALL_SYSTEMS
+        and not configured_system_ids
+        and not entry.subentries
+    ):
         # Keep a snapshot of system ids for all-systems entries.
         entry_data = {**entry.data, CONF_SYSTEM_IDS: sorted(tracked_system_ids)}
         hass.config_entries.async_update_entry(entry, data=entry_data)
+
+    system_subentry_ids = _configured_system_subentry_ids(
+        entry,
+        allowed_system_ids=tracked_system_ids,
+    )
 
     module_coordinator = None
     if options[OPT_ENABLE_MODULE_TELEMETRY]:
@@ -131,6 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         summary_coordinator=summary_coordinator,
         module_coordinator=module_coordinator,
         tracked_system_ids=tracked_system_ids,
+        system_subentry_ids=system_subentry_ids,
         connection_notifier=connection_notifier,
     )
 
@@ -204,6 +226,99 @@ def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
             )
         ),
     }
+
+
+def _configured_system_subentry_ids(
+    entry: ConfigEntry,
+    *,
+    allowed_system_ids: set[int] | None = None,
+) -> dict[int, str]:
+    """Return system_id -> subentry_id mapping for configured system subentries."""
+    mapping: dict[int, str] = {}
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type != SUBENTRY_TYPE_SYSTEM:
+            continue
+        raw_system_id = subentry.data.get(CONF_SYSTEM_ID)
+        if raw_system_id is None:
+            continue
+        try:
+            system_id = int(raw_system_id)
+        except (TypeError, ValueError):
+            continue
+        if allowed_system_ids is not None and system_id not in allowed_system_ids:
+            continue
+        mapping[system_id] = subentry.subentry_id
+    return mapping
+
+
+def _configured_system_ids_from_subentries(entry: ConfigEntry) -> set[int]:
+    """Return configured system IDs from system subentries."""
+    return set(_configured_system_subentry_ids(entry).keys())
+
+
+def _legacy_configured_system_ids(entry: ConfigEntry, entry_mode: str) -> set[int]:
+    """Return configured system IDs from legacy entry data fields."""
+    if entry_mode == ENTRY_MODE_SINGLE_SYSTEM and CONF_SYSTEM_ID in entry.data:
+        try:
+            return {int(entry.data[CONF_SYSTEM_ID])}
+        except (TypeError, ValueError):
+            return set()
+
+    configured: set[int] = set()
+    for system_id in entry.data.get(CONF_SYSTEM_IDS, []):
+        if system_id is None:
+            continue
+        try:
+            configured.add(int(system_id))
+        except (TypeError, ValueError):
+            continue
+    return configured
+
+
+async def _async_create_system_subentries_from_legacy(
+    *,
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    client: TigoApiClient,
+    system_ids: set[int],
+) -> None:
+    """Create system subentries for legacy entries that stored systems in entry data."""
+    if not system_ids:
+        return
+
+    system_names: dict[int, str] = {}
+    try:
+        list_payload = await client.async_list_systems()
+    except Exception as err:  # pragma: no cover - defensive fallback
+        LOGGER.debug("Unable to fetch system names for legacy subentry migration: %s", err)
+    else:
+        system_names = {
+            int(record["system_id"]): str(
+                record.get("name") or f"System {record['system_id']}"
+            )
+            for record in list_payload
+            if record.get("system_id") is not None
+        }
+
+    existing_ids = _configured_system_ids_from_subentries(entry)
+    for system_id in sorted(system_ids):
+        if system_id in existing_ids:
+            continue
+
+        subentry = ConfigSubentry(
+            subentry_type=SUBENTRY_TYPE_SYSTEM,
+            unique_id=str(system_id),
+            title=system_names.get(system_id, f"System {system_id}"),
+            data=MappingProxyType({CONF_SYSTEM_ID: system_id}),
+        )
+        try:
+            hass.config_entries.async_add_subentry(entry, subentry)
+        except ValueError as err:
+            LOGGER.debug(
+                "Skipping legacy system subentry migration for %s due to conflict: %s",
+                system_id,
+                err,
+            )
 
 
 def _module_label_map_by_system(

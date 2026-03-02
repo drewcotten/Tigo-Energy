@@ -92,15 +92,16 @@ The integration setup flow is:
 
 1. Enter Tigo username/password.
 2. Integration validates credentials and fetches available systems.
-3. Choose scope:
-   - `single_system` (default)
-   - `all_systems`
-4. If `single_system`, select the system to track.
+3. Choose initial scope:
+   - `single_system` (default) creates one system subentry
+   - `all_systems` creates one subentry per discovered system
+4. If `single_system`, select the system to add first.
 5. Set initial polling intervals in seconds:
    - `summary_poll_seconds` (default `60`)
    - `module_poll_seconds` (default `300`)
 6. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
 7. Choose whether Home Assistant should show persistent warning notifications (connection issues, sustained low RSSI, and critical telemetry lag). Default is `on`.
+8. After setup, use **Add system** on the integration page to add more system subentries under the same account entry.
 
 Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers and document a per-account cap (`100` requests/minute). Use conservative poll intervals, especially for multi-system accounts.
 
@@ -142,7 +143,7 @@ These are the exact Home Assistant sensor names created by this integration.
 - Latest alert code
 - Latest alert time
 
-System entities/devices are created per tracked system in both `single_system` and `all_systems` entry modes, including cases where module telemetry is discovered before full summary payloads are available.
+System entities/devices are created per configured system subentry, including cases where module telemetry is discovered before full summary payloads are available.
 
 ### System binary sensors (`<System Name>`)
 
@@ -165,7 +166,7 @@ System entities/devices are created per tracked system in both `single_system` a
 - RSSI
 
 When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`). If a semantic label is not present, the integration falls back to module ID-style naming.
-For multi-system entries, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
+For multi-system accounts, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
 
 ### Additional system diagnostics (when module telemetry is enabled)
 

@@ -17,7 +17,6 @@ from .const import (
     CONF_ACCOUNT_ID,
     CONF_ENTRY_MODE,
     CONF_SYSTEM_ID,
-    CONF_SYSTEM_IDS,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
@@ -54,6 +53,7 @@ from .const import (
     OPT_RSSI_WATCH_THRESHOLD,
     OPT_STALE_THRESHOLD_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
+    SUBENTRY_TYPE_SYSTEM,
 )
 
 
@@ -207,53 +207,30 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._summary_poll_seconds = int(user_input[OPT_SUMMARY_POLL_SECONDS])
             self._module_poll_seconds = int(user_input[OPT_MODULE_POLL_SECONDS])
 
-            if self._selected_entry_mode == ENTRY_MODE_ALL_SYSTEMS:
-                unique_id = f"{self._account_id}:all"
-                await self.async_set_unique_id(unique_id)
-                self._abort_if_unique_id_configured()
+            selected_systems = self._selected_system_records()
+            if not selected_systems:
+                return self.async_abort(reason="no_systems")
 
-                return self.async_create_entry(
-                    title="Tigo Energy (All Systems)",
-                    data={
-                        CONF_USERNAME: self._username,
-                        CONF_PASSWORD: self._password,
-                        CONF_ACCOUNT_ID: self._account_id,
-                        CONF_ENTRY_MODE: ENTRY_MODE_ALL_SYSTEMS,
-                        CONF_SYSTEM_IDS: [record.system_id for record in self._systems],
-                    },
-                    options={
-                        OPT_SUMMARY_POLL_SECONDS: self._summary_poll_seconds,
-                        OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
-                        OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
-                        OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
-                    },
-                )
-
-            if self._selected_system_id is None:
-                return self.async_abort(reason="unknown")
-
-            unique_id = f"{self._account_id}:{self._selected_system_id}"
-            await self.async_set_unique_id(unique_id)
+            await self.async_set_unique_id(self._account_id)
             self._abort_if_unique_id_configured()
 
-            selected_name = next(
-                (
-                    record.name
-                    for record in self._systems
-                    if record.system_id == self._selected_system_id
-                ),
-                f"System {self._selected_system_id}",
-            )
-
             return self.async_create_entry(
-                title=f"Tigo Energy ({selected_name})",
+                title="Tigo Energy",
                 data={
                     CONF_USERNAME: self._username,
                     CONF_PASSWORD: self._password,
                     CONF_ACCOUNT_ID: self._account_id,
-                    CONF_ENTRY_MODE: ENTRY_MODE_SINGLE_SYSTEM,
-                    CONF_SYSTEM_ID: self._selected_system_id,
+                    CONF_ENTRY_MODE: self._selected_entry_mode,
                 },
+                subentries=[
+                    {
+                        "subentry_type": SUBENTRY_TYPE_SYSTEM,
+                        "title": record.name,
+                        "unique_id": str(record.system_id),
+                        "data": {CONF_SYSTEM_ID: record.system_id},
+                    }
+                    for record in selected_systems
+                ],
                 options={
                     OPT_SUMMARY_POLL_SECONDS: self._summary_poll_seconds,
                     OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
@@ -283,6 +260,21 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(step_id="module_telemetry", data_schema=schema)
+
+    def _selected_system_records(self) -> list[FlowSystemRecord]:
+        """Return systems selected by scope/system selection steps."""
+        if self._selected_entry_mode == ENTRY_MODE_ALL_SYSTEMS:
+            return list(self._systems)
+
+        if self._selected_system_id is None:
+            return []
+
+        selected = [
+            record for record in self._systems if record.system_id == self._selected_system_id
+        ]
+        if selected:
+            return selected
+        return [FlowSystemRecord(system_id=self._selected_system_id, name=f"System {self._selected_system_id}")]
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
         """Handle initialization of reauthentication flow."""
@@ -346,6 +338,103 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
         """Return options flow handler."""
         return TigoOptionsFlow(config_entry)
+
+    @classmethod
+    @config_entries.callback
+    def async_get_supported_subentry_types(
+        cls,
+        config_entry: config_entries.ConfigEntry,
+    ) -> dict[str, type[config_entries.ConfigSubentryFlow]]:
+        """Return supported subentry flow handlers."""
+        return {SUBENTRY_TYPE_SYSTEM: TigoSystemSubentryFlow}
+
+
+class TigoSystemSubentryFlow(config_entries.ConfigSubentryFlow):
+    """Handle adding a system subentry to an existing account entry."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Select and add an additional system."""
+        entry = self._get_entry()
+        username = str(entry.data.get(CONF_USERNAME, "")).strip()
+        password = str(entry.data.get(CONF_PASSWORD, ""))
+        if not username or not password:
+            return self.async_abort(reason="unknown")
+
+        errors: dict[str, str] = {}
+
+        try:
+            validation = await _async_validate_credentials(self.hass, username, password)
+        except InvalidAuth:
+            errors["base"] = "invalid_auth"
+            validation = None
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+            validation = None
+        except Exception:  # pragma: no cover - defensive fallback
+            errors["base"] = "unknown"
+            validation = None
+
+        existing_system_ids: set[int] = set()
+        for subentry in entry.subentries.values():
+            if subentry.subentry_type != SUBENTRY_TYPE_SYSTEM:
+                continue
+            raw_system_id = subentry.data.get(CONF_SYSTEM_ID)
+            if raw_system_id is None:
+                continue
+            try:
+                existing_system_ids.add(int(raw_system_id))
+            except (TypeError, ValueError):
+                continue
+
+        available_systems: list[FlowSystemRecord] = []
+        if validation is not None:
+            available_systems = [
+                record
+                for record in validation.systems
+                if record.system_id not in existing_system_ids
+            ]
+
+        if user_input is not None and validation is not None:
+            system_id = int(user_input[CONF_SYSTEM_ID])
+            if system_id in existing_system_ids:
+                return self.async_abort(reason="already_configured")
+
+            selected = next(
+                (record for record in validation.systems if record.system_id == system_id),
+                None,
+            )
+            if selected is None:
+                errors["base"] = "no_systems"
+            else:
+                return self.async_create_entry(
+                    title=selected.name,
+                    unique_id=str(selected.system_id),
+                    data={CONF_SYSTEM_ID: selected.system_id},
+                )
+
+        if not errors and not available_systems:
+            return self.async_abort(reason="no_unconfigured_systems")
+
+        options = [
+            selector.SelectOptionDict(
+                value=str(record.system_id),
+                label=f"{record.name} ({record.system_id})",
+            )
+            for record in available_systems
+        ]
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_SYSTEM_ID): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+            }
+        )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
 
 class TigoOptionsFlow(config_entries.OptionsFlow):

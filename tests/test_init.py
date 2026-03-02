@@ -12,15 +12,20 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.tigo_energy import (
     _async_migrate_module_ids_to_semantic_labels,
+    _configured_system_subentry_ids,
+    _legacy_configured_system_ids,
     async_setup_entry,
 )
 from custom_components.tigo_energy.api import TigoApiAuthError, TigoApiConnectionError
 from custom_components.tigo_energy.const import (
     CONF_ENTRY_MODE,
     CONF_SYSTEM_ID,
+    CONF_SYSTEM_IDS,
     DOMAIN,
+    ENTRY_MODE_ALL_SYSTEMS,
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+    SUBENTRY_TYPE_SYSTEM,
 )
 
 
@@ -131,3 +136,42 @@ async def test_module_registry_migration_updates_entity_and_device_ids(hass):
         "device-1",
         new_identifiers={(DOMAIN, "module_1001_A1")},
     )
+
+
+def test_configured_system_subentry_ids_filters_to_system_type() -> None:
+    """System subentry mapping should include only valid system subentries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        subentries_data=[
+            {
+                "subentry_id": "sub-1",
+                "subentry_type": SUBENTRY_TYPE_SYSTEM,
+                "title": "Site One",
+                "unique_id": "1001",
+                "data": {CONF_SYSTEM_ID: 1001},
+            },
+            {
+                "subentry_id": "sub-x",
+                "subentry_type": "other",
+                "title": "Ignore",
+                "unique_id": "x",
+                "data": {CONF_SYSTEM_ID: 9999},
+            },
+        ],
+    )
+
+    assert _configured_system_subentry_ids(entry) == {1001: "sub-1"}
+
+
+def test_legacy_configured_system_ids_handles_mixed_values() -> None:
+    """Legacy system ID extraction should ignore invalid values."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_ENTRY_MODE: ENTRY_MODE_ALL_SYSTEMS,
+            CONF_SYSTEM_IDS: [1001, "1002", None, "bad"],
+        },
+    )
+
+    assert _legacy_configured_system_ids(entry, ENTRY_MODE_ALL_SYSTEMS) == {1001, 1002}

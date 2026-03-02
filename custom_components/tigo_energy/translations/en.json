@@ -78,6 +78,33 @@
       "rssi_threshold_order": "RSSI watch threshold must be greater than RSSI alert threshold."
     }
   },
+  "config_subentries": {
+    "system": {
+      "entry_type": "System",
+      "initiate_flow": {
+        "user": "Add system"
+      },
+      "step": {
+        "user": {
+          "title": "Add system",
+          "description": "Choose an additional system to add under this account entry.",
+          "data": {
+            "system_id": "System"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Failed to connect to Tigo API.",
+        "invalid_auth": "Invalid username or password.",
+        "no_systems": "No systems were found for this account.",
+        "unknown": "Unexpected error. Check logs and try again."
+      },
+      "abort": {
+        "already_configured": "This system is already configured for this account entry.",
+        "no_unconfigured_systems": "All available systems are already added."
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "current_power": {

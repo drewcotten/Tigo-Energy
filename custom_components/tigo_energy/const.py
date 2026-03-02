@@ -17,6 +17,7 @@ CONF_SYSTEM_IDS: Final = "system_ids"
 CONF_ACCOUNT_ID: Final = "account_id"
 CONF_USERNAME: Final = "username"
 CONF_PASSWORD: Final = "password"
+SUBENTRY_TYPE_SYSTEM: Final = "system"
 
 ENTRY_MODE_SINGLE_SYSTEM: Final = "single_system"
 ENTRY_MODE_ALL_SYSTEMS: Final = "all_systems"

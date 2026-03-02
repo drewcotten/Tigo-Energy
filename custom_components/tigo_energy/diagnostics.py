@@ -33,6 +33,10 @@ async def async_get_config_entry_diagnostics(
             "entry_mode": runtime.entry_mode,
             "account_id": runtime.account_id,
             "tracked_system_ids": sorted(runtime.tracked_system_ids),
+            "system_subentry_ids": {
+                str(system_id): subentry_id
+                for system_id, subentry_id in runtime.system_subentry_ids.items()
+            },
             "summary_freshness": {
                 "latest_stable_timestamp": summary_data.freshness.latest_stable_timestamp,
                 "fetched_at": summary_data.freshness.fetched_at,

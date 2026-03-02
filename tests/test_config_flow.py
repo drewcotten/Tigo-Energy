@@ -25,6 +25,7 @@ from custom_components.tigo_energy.const import (
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_MODULE_POLL_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
+    SUBENTRY_TYPE_SYSTEM,
 )
 
 
@@ -79,8 +80,13 @@ async def test_config_flow_single_system_success(hass):
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_ENTRY_MODE] == ENTRY_MODE_SINGLE_SYSTEM
-    assert result["data"][CONF_SYSTEM_ID] == 1001
     assert result["data"][CONF_ACCOUNT_ID] == "42"
+    assert len(result["subentries"]) == 1
+    subentry = result["subentries"][0]
+    assert subentry["subentry_type"] == SUBENTRY_TYPE_SYSTEM
+    assert subentry["title"] == "Site One"
+    assert subentry["unique_id"] == "1001"
+    assert subentry["data"]["system_id"] == 1001
     assert result["options"][OPT_SUMMARY_POLL_SECONDS] == 60
     assert result["options"][OPT_MODULE_POLL_SECONDS] == 300
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is True
@@ -128,7 +134,10 @@ async def test_config_flow_all_systems_success(hass):
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_ENTRY_MODE] == ENTRY_MODE_ALL_SYSTEMS
-    assert sorted(result["data"]["system_ids"]) == [1001, 1002]
+    assert {subentry["data"]["system_id"] for subentry in result["subentries"]} == {
+        1001,
+        1002,
+    }
     assert result["options"][OPT_SUMMARY_POLL_SECONDS] == 75
     assert result["options"][OPT_MODULE_POLL_SECONDS] == 360
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is False
@@ -164,7 +173,6 @@ async def test_reauth_success(hass):
             CONF_PASSWORD: "oldpw",
             CONF_ACCOUNT_ID: "42",
             CONF_ENTRY_MODE: ENTRY_MODE_SINGLE_SYSTEM,
-            CONF_SYSTEM_ID: 1001,
         },
         source=config_entries.SOURCE_USER,
         entry_id="test-entry",

@@ -137,10 +137,13 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 continue
             systems_from_api[int(system_id)] = record
 
-        if self._entry_mode == ENTRY_MODE_ALL_SYSTEMS:
+        if self._configured_system_ids:
+            # Explicitly configured systems (for subentries or legacy mode) always win.
+            target_system_ids = set(self._configured_system_ids)
+        elif self._entry_mode == ENTRY_MODE_ALL_SYSTEMS:
             target_system_ids = set(systems_from_api)
         else:
-            target_system_ids = set(self._configured_system_ids)
+            target_system_ids = set()
 
         if not target_system_ids:
             await self._async_report_connection_recovered()

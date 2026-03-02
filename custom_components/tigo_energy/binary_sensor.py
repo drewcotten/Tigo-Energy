@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -49,15 +50,30 @@ ALERT_BINARY_SENSORS: tuple[AlertBinaryDescription, ...] = (
 async def async_setup_entry(
     hass,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up binary sensors from a config entry."""
     runtime: TigoRuntimeData = entry.runtime_data
-    manager = TigoAlertBinaryEntityManager(entry, runtime, async_add_entities)
+
+    def _async_add_grouped(entities: list[TigoAlertBinarySensor]) -> None:
+        groups: dict[str | None, list[TigoAlertBinarySensor]] = {}
+        for entity in entities:
+            system_id = getattr(entity, "_system_id", None)
+            subentry_id = (
+                runtime.system_subentry_ids.get(system_id)
+                if isinstance(system_id, int)
+                else None
+            )
+            groups.setdefault(subentry_id, []).append(entity)
+
+        for subentry_id, grouped_entities in groups.items():
+            async_add_entities(grouped_entities, config_subentry_id=subentry_id)
+
+    manager = TigoAlertBinaryEntityManager(entry, runtime, _async_add_grouped)
 
     entities = manager.collect_initial_entities()
     if entities:
-        async_add_entities(entities)
+        _async_add_grouped(entities)
 
     entry.async_on_unload(
         runtime.summary_coordinator.async_add_listener(manager.handle_summary_update)
@@ -71,7 +87,7 @@ class TigoAlertBinaryEntityManager:
         self,
         entry: ConfigEntry,
         runtime: TigoRuntimeData,
-        async_add_entities: AddEntitiesCallback,
+        async_add_entities: Callable[[list[TigoAlertBinarySensor]], None],
     ) -> None:
         self._entry = entry
         self._runtime = runtime

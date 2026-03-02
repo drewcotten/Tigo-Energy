@@ -142,5 +142,6 @@ class TigoRuntimeData:
     summary_coordinator: DataUpdateCoordinator[SummarySnapshot]
     module_coordinator: DataUpdateCoordinator[ModuleSnapshot] | None
     tracked_system_ids: set[int]
+    system_subentry_ids: dict[int, str] = field(default_factory=dict)
     connection_notifier: Any | None = None
     unsub_update_listener: Any | None = None
