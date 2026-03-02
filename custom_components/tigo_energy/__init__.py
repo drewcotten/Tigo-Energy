@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -75,6 +76,7 @@ from .notifications import CONNECTION_SOURCE_SETUP, TigoConnectionNotifier
 
 type TigoConfigEntry = ConfigEntry[TigoRuntimeData]
 LOGGER = logging.getLogger(__name__)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 MODULE_UNIQUE_ID_PATTERN = re.compile(
     r"^(?P<system_id>\d+)_(?P<module_id>.+)_(?P<metric>Pin|Vin|Iin|RSSI)$"
 )
