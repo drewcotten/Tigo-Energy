@@ -10,9 +10,9 @@ Scope:
 
 Notes:
 
-- Entity IDs are dynamically generated from config entry/system/source/module context.
+- Entity IDs are dynamically generated from config entry/system/source/panel context.
 - Sensor names below reference translation keys defined by the integration.
-- Module sensors exist only when `enable_module_telemetry` is enabled.
+- Panel telemetry sensors exist only when `enable_module_telemetry` is enabled.
 
 ## Telemetry and Metrics
 
@@ -26,7 +26,7 @@ Notes:
 | `Datetime` (telemetry rows) | Internal parsing input | No (raw) | Parsed as site-local bucket time (`system timezone -> HA timezone -> UTC`). |
 | `param` | Internal request parameter | No | Metric selector for aggregate/combined calls. |
 | `level` | Internal request parameter | No | Normalized to `minute` for integration telemetry queries. |
-| `start` / `end` | Internal request window | No | UTC ISO query bounds used by lag-aware polling and fallback. |
+| `start` / `end` | Internal request window | No | Site-local wall-clock query bounds derived from lag-aware polling windows. |
 
 ## System Metadata
 
@@ -62,14 +62,13 @@ Notes:
 
 | Tigo term | Home Assistant mapping | Exposed | Notes |
 |---|---|---|---|
-| `id` (object) | Not currently mapped | No | Not used for current entity model. |
-| `label` | Not currently mapped | No | Not used for current entity model. |
-| `object_type_id` | Not currently mapped | No | Not used for current entity model. |
-| `parent_id` | Not currently mapped | No | Not used for current entity model. |
-| `children` | Not currently mapped | No | Not used for current entity model. |
-| `datasource` | Not currently mapped | No | Not used for current entity model. |
-| `object_ids` (query param) | Not currently mapped | No | Not used by current polling implementation. |
-| `header=key` | Internal API option | No | Current integration uses aggregate/combined CSV header handling internally. |
+| `id` / `object_id` / `panel_id` | Panel identity fallback mapping | Indirect | Used to map raw telemetry keys to semantic panel labels and array membership. |
+| `label` | Panel and array naming | Yes (indirect) | Used for user-facing panel labels (`A1`, `B12`) and array names. |
+| `string_id` / `short_label` | Array identity and naming | Yes (indirect) | Used to build array IDs/names and panel-to-array mapping. |
+| `mppt_id` / inverter linkage fields | Array context attributes | Yes (indirect) | Used for array metadata attributes (MPPT/inverter context). |
+| `object_type_id` / `parent_id` / `children` / `datasource` | Not currently mapped | No | Not required for current sensor/entity model. |
+| `object_ids` (query param) | Not currently used | No | Current polling reads system-wide aggregate/combined windows. |
+| `header=key` | Internal API option | No | Aggregate polling requests key headers so semantic panel labels can be parsed when provided. |
 
 ## Auth and API Metadata
 
@@ -88,7 +87,7 @@ These are not raw Tigo field names, but the integration computes and exposes the
 | Derived field | Home Assistant mapping | Notes |
 |---|---|---|
 | Latest stable timestamp | `latest_stable_data_timestamp` | System-level freshness sensor. |
-| Stale flag and lag | `is_stale`, `data_lag_seconds` attributes | Added to coordinator-backed entities. |
+| Stale/freshness flags | `is_stale`, `data_lag_seconds`, `system_data_*`, `module_data_*` attributes | Added to coordinator-backed entities for global + per-system/per-panel freshness context. |
 | Telemetry lag | `telemetry_lag_minutes` + attributes | Attributes include `telemetry_lag_status`, thresholds, and timestamp references. |
 | Heartbeat age | `heartbeat_age_minutes` + attributes | Derived from latest source heartbeat recency. |
 | RSSI status label | `rssi_status` attribute on `module_rssi` | Values: `good`, `watch`, `alert`. |

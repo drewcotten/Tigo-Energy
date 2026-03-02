@@ -2,10 +2,11 @@
 
 This is a practical "stuff you should be aware of" guide for integrating with the Tigo Cloud API used in this repo.
 
-It complements:
+Related docs in this repo:
 
-- `docs/observed_tigo_api_behavior_and_formats.md` (field/format details)
-- `docs/repo_guide.md` (repo command behavior)
+- `docs/tigo-readonly-alerts-live-probe-2026-03-01.md` (live endpoint probe notes)
+- `docs/persistent-notifications-reference.md` (notification behavior and option gates)
+- `docs/entity-name-reference.md` (HA naming patterns and examples)
 
 ## Audience and Scope
 

@@ -1,4 +1,7 @@
-# Tigo Energy
+<h1>
+  <img src="custom_components/tigo_energy/brand/icon.png" alt="Tigo Energy icon" width="36" valign="middle" />
+  Tigo Energy
+</h1>
 
 [![GitHub Release](https://img.shields.io/github/v/release/drewcotten/tigo-energy?include_prereleases)](https://github.com/drewcotten/Tigo-Energy/releases)
 [![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
@@ -6,9 +9,15 @@
 
 Home Assistant custom integration for **Tigo Energy Premium cloud API** telemetry.
 
-This integration pulls Tigo cloud data into Home Assistant with native UI setup, account login in-flow, and practical handling for cloud-delayed minute telemetry.
+This is a read-only integration that brings Tigo cloud telemetry into Home Assistant with native UI setup and in-flow account login.
 
-In plain terms: you can add your Tigo account, pick one or more systems, and get system, source, array, and panel entities without YAML.
+What you get after setup:
+
+- system production and energy totals
+- source/CCA health and control state
+- optional panel-level telemetry and array rollups
+
+No YAML is required.
 
 ## Documentation
 
@@ -20,13 +29,12 @@ In plain terms: you can add your Tigo account, pick one or more systems, and get
 
 ## Features
 
-- Native Home Assistant onboarding with one account entry and per-system subentries (**Add system** to expand).
-- System + source monitoring: power/energy summary plus source heartbeat/control/firmware/gateway state.
-- Optional module telemetry (`Pin`, `Vin`, `Iin`, `RSSI`) with semantic panel labels (`A1`, `B4`, etc.).
-- Array-level derived sensors (power, voltage/current aggregates, RSSI health, reporting coverage).
-- Read-only safety/alert visibility: `PV-Off active`, `String shutdown active`, and alert summary sensors.
+- Native Home Assistant onboarding with one account hub entry and per-system subentries (**Add system** to expand).
+- Optional panel telemetry from minute aggregate data: panel input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus array rollup sensors.
+- System and source monitoring: power/energy summary plus heartbeat, control state, firmware, and gateway state.
+- Read-only alert visibility: `PV-Off active`, `String shutdown active`, and system alert summary sensors.
 - Lag-aware cloud handling (rolling backfill, empty-window fallback, freshness/lag diagnostics).
-- Configurable persistent notifications with per-channel toggles (connection, RSSI, telemetry lag, PV-Off, string shutdown, active-alert summary).
+- Configurable persistent notifications with per-channel toggles and optional sunset guard.
 
 ## Tigo API Data Time Lag
 
@@ -46,7 +54,7 @@ How this integration handles it:
 - Retries once with a wider lookback if short-window results are empty.
 - Marks data as stale via attributes/diagnostics when data age exceeds `stale_threshold_seconds`.
 
-In Home Assistant, dashboards show the latest stable cloud value rather than true real-time output. Automations should use freshness/lag context (for example `telemetry_lag_status`, `system_data_is_stale`, and `module_data_is_stale`) instead of assuming current-minute data, and alert thresholds should allow for normal cloud delay before treating missing recent minutes as a fault.
+In Home Assistant, this data behaves as latest-state cloud telemetry, not true real-time meter data. Use freshness and lag fields (for example `telemetry_lag_status`, `system_data_is_stale`, and `module_data_is_stale`) in automations instead of assuming current-minute updates.
 
 ## Latest-State vs Historical Backfill
 
