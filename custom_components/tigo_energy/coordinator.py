@@ -28,6 +28,9 @@ from .const import (
     DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
+    DEFAULT_NOTIFY_CONNECTION_ISSUES,
+    DEFAULT_NOTIFY_LOW_RSSI,
+    DEFAULT_NOTIFY_TELEMETRY_LAG,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
     DEFAULT_RSSI_ALERT_THRESHOLD,
@@ -47,6 +50,12 @@ from .const import (
     OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
+    OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+    OPT_NOTIFY_CONNECTION_ISSUES,
+    OPT_NOTIFY_LOW_RSSI,
+    OPT_NOTIFY_PV_OFF,
+    OPT_NOTIFY_STRING_SHUTDOWN,
+    OPT_NOTIFY_TELEMETRY_LAG,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
     OPT_RSSI_ALERT_THRESHOLD,
@@ -102,6 +111,12 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         self._configured_system_ids = configured_system_ids
         self._options = options
         self._connection_notifier = connection_notifier
+        self._notify_connection_issues = bool(
+            options.get(
+                OPT_NOTIFY_CONNECTION_ISSUES,
+                DEFAULT_NOTIFY_CONNECTION_ISSUES,
+            )
+        )
         self.tracked_system_ids: set[int] = set(configured_system_ids)
         self._telemetry_lag_critical_poll_streak = 0
         self._alert_warning_system_ids: set[int] = set()
@@ -147,6 +162,30 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             self._options.get(
                 OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
                 DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+            )
+        )
+        notify_telemetry_lag = bool(
+            self._options.get(
+                OPT_NOTIFY_TELEMETRY_LAG,
+                DEFAULT_NOTIFY_TELEMETRY_LAG,
+            )
+        )
+        notify_pv_off = bool(
+            self._options.get(
+                OPT_NOTIFY_PV_OFF,
+                enable_alert_feed_notifications,
+            )
+        )
+        notify_string_shutdown = bool(
+            self._options.get(
+                OPT_NOTIFY_STRING_SHUTDOWN,
+                enable_alert_feed_notifications,
+            )
+        )
+        notify_active_alert_summary = bool(
+            self._options.get(
+                OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+                enable_alert_feed_notifications,
             )
         )
 
@@ -464,10 +503,13 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             critical_system_count=critical_system_count,
             warning_system_count=warning_system_count,
             worst_critical_lag_minutes=worst_critical_lag_minutes,
+            enabled=notify_telemetry_lag,
         )
         await self._async_handle_alert_feed_notifications(
             systems=systems,
-            enabled=enable_alert_feed_notifications,
+            pv_off_enabled=notify_pv_off,
+            string_shutdown_enabled=notify_string_shutdown,
+            active_alert_summary_enabled=notify_active_alert_summary,
         )
 
         account_id = self._client.account_id or "unknown"
@@ -532,9 +574,14 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         critical_system_count: int,
         warning_system_count: int,
         worst_critical_lag_minutes: float | None,
+        enabled: bool,
     ) -> None:
         """Create/clear critical telemetry lag notification with debounce."""
         if self._connection_notifier is None:
+            return
+        if not enabled:
+            self._telemetry_lag_critical_poll_streak = 0
+            await self._connection_notifier.async_clear_telemetry_lag_alert()
             return
 
         if critical_system_count > 0:
@@ -557,13 +604,15 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         self,
         *,
         systems: Mapping[int, SystemSnapshot],
-        enabled: bool,
+        pv_off_enabled: bool,
+        string_shutdown_enabled: bool,
+        active_alert_summary_enabled: bool,
     ) -> None:
         """Create/clear alert-feed persistent notifications."""
         if self._connection_notifier is None:
             return
 
-        if not enabled:
+        if not any((pv_off_enabled, string_shutdown_enabled, active_alert_summary_enabled)):
             await self._connection_notifier.async_clear_pv_off_alert()
             await self._connection_notifier.async_clear_string_shutdown_alert()
             await self._connection_notifier.async_clear_active_alerts()
@@ -572,7 +621,9 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         pv_off_system_names = sorted(
             system.name for system in systems.values() if system.alert_state.pv_off_active
         )
-        if pv_off_system_names:
+        if not pv_off_enabled:
+            await self._connection_notifier.async_clear_pv_off_alert()
+        elif pv_off_system_names:
             await self._connection_notifier.async_report_pv_off_active(
                 system_names=pv_off_system_names,
                 system_count=len(pv_off_system_names),
@@ -583,7 +634,9 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         shutdown_system_names = sorted(
             system.name for system in systems.values() if system.alert_state.string_shutdown_active
         )
-        if shutdown_system_names:
+        if not string_shutdown_enabled:
+            await self._connection_notifier.async_clear_string_shutdown_alert()
+        elif shutdown_system_names:
             await self._connection_notifier.async_report_string_shutdown_active(
                 system_names=shutdown_system_names,
                 system_count=len(shutdown_system_names),
@@ -602,7 +655,9 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 if system.alert_state.latest_active_alert is not None
             ]
         )
-        if total_active_alerts > 0:
+        if not active_alert_summary_enabled:
+            await self._connection_notifier.async_clear_active_alerts()
+        elif total_active_alerts > 0:
             await self._connection_notifier.async_report_active_alerts(
                 total_active_alerts=total_active_alerts,
                 affected_system_count=len(systems_with_alerts),
@@ -621,11 +676,15 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         """Show connectivity notification when this coordinator cannot reach API."""
         if self._connection_notifier is None:
             return
+        if not self._notify_connection_issues:
+            return
         await self._connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_SUMMARY)
 
     async def _async_report_connection_recovered(self) -> None:
         """Dismiss connectivity notification when this coordinator recovers."""
         if self._connection_notifier is None:
+            return
+        if not self._notify_connection_issues:
             return
         await self._connection_notifier.async_report_connection_recovered(
             CONNECTION_SOURCE_SUMMARY
@@ -647,6 +706,12 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         self._summary_coordinator = summary_coordinator
         self._options = options
         self._connection_notifier = connection_notifier
+        self._notify_connection_issues = bool(
+            options.get(
+                OPT_NOTIFY_CONNECTION_ISSUES,
+                DEFAULT_NOTIFY_CONNECTION_ISSUES,
+            )
+        )
         self._points_by_key: dict[tuple[int, str, str], ModulePoint] = {}
         self._low_rssi_poll_streak = 0
 
@@ -684,6 +749,12 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             self._options.get(
                 OPT_ENABLE_SUNSET_ALERT_GUARD,
                 DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
+            )
+        )
+        notify_low_rssi = bool(
+            self._options.get(
+                OPT_NOTIFY_LOW_RSSI,
+                DEFAULT_NOTIFY_LOW_RSSI,
             )
         )
 
@@ -810,7 +881,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             )
         )
 
-        if low_rssi_count > 0 and low_rssi_guard_active:
+        if notify_low_rssi and low_rssi_count > 0 and low_rssi_guard_active:
             self._low_rssi_poll_streak += 1
         else:
             self._low_rssi_poll_streak = 0
@@ -820,7 +891,8 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         is_stale = lag_seconds is None or lag_seconds > stale_threshold
         await self._async_report_connection_recovered()
         if (
-            low_rssi_count > 0
+            notify_low_rssi
+            and low_rssi_count > 0
             and low_rssi_guard_active
             and self._low_rssi_poll_streak >= rssi_alert_consecutive_polls
         ):
@@ -832,7 +904,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 watch_threshold=rssi_watch_threshold,
                 consecutive_polls=rssi_alert_consecutive_polls,
             )
-        elif low_rssi_count == 0 or not low_rssi_guard_active:
+        elif (not notify_low_rssi) or low_rssi_count == 0 or not low_rssi_guard_active:
             await self._async_clear_low_rssi_alert()
 
         return ModuleSnapshot(
@@ -949,11 +1021,15 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         """Show connectivity notification when this coordinator cannot reach API."""
         if self._connection_notifier is None:
             return
+        if not self._notify_connection_issues:
+            return
         await self._connection_notifier.async_report_connection_failure(CONNECTION_SOURCE_MODULES)
 
     async def _async_report_connection_recovered(self) -> None:
         """Dismiss connectivity notification when this coordinator recovers."""
         if self._connection_notifier is None:
+            return
+        if not self._notify_connection_issues:
             return
         await self._connection_notifier.async_report_connection_recovered(
             CONNECTION_SOURCE_MODULES

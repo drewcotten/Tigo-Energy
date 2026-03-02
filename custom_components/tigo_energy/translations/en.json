@@ -26,16 +26,21 @@
       },
       "module_telemetry": {
         "title": "Module telemetry",
-        "description": "Set initial poll intervals (seconds), module telemetry, and alert behavior. Defaults are summary=60 and module=300. Tigo API documents a per-account rate cap of 100 requests/minute, so keep intervals conservative for multi-system accounts.",
+        "description": "Set initial poll intervals (seconds), module telemetry, and notification behavior. Defaults are summary=60 and module=300. Tigo API documents a per-account rate cap of 100 requests/minute, so keep intervals conservative for multi-system accounts.",
         "data": {
           "summary_poll_seconds": "Summary poll interval (seconds)",
           "module_poll_seconds": "Module poll interval (seconds)",
           "enable_module_telemetry": "Enable module-level telemetry",
-          "enable_persistent_notifications": "Enable persistent notifications for connection, RSSI, and telemetry lag alerts",
-          "enable_sunset_alert_guard": "Enable sunset-aware guard for RSSI and telemetry lag alerts",
+          "enable_persistent_notifications": "Enable persistent notifications (master switch)",
+          "notify_connection_issues": "Connection issues",
+          "notify_low_rssi": "Low RSSI",
+          "notify_telemetry_lag": "Telemetry lag",
+          "notify_pv_off": "PV-Off active",
+          "notify_string_shutdown": "String shutdown",
+          "notify_active_alert_summary": "Active alerts summary",
+          "enable_sunset_alert_guard": "Suppress lag/RSSI alerts at night (sunset guard)",
           "sun_guard_min_elevation_degrees": "Sun guard minimum elevation (degrees)",
-          "sun_guard_positive_power_grace_minutes": "Sun guard recent production grace (minutes)",
-          "enable_alert_feed_notifications": "Enable persistent notifications for PV-Off and active Tigo alerts"
+          "sun_guard_positive_power_grace_minutes": "Sun guard recent production grace (minutes)"
         }
       },
       "reauth_confirm": {
@@ -68,11 +73,16 @@
           "summary_poll_seconds": "Summary poll interval (seconds)",
           "module_poll_seconds": "Module poll interval (seconds)",
           "enable_module_telemetry": "Enable module-level telemetry",
-          "enable_persistent_notifications": "Enable persistent notifications for connection, RSSI, and telemetry lag alerts",
-          "enable_sunset_alert_guard": "Enable sunset-aware guard for RSSI and telemetry lag alerts",
+          "enable_persistent_notifications": "Enable persistent notifications (master switch)",
+          "notify_connection_issues": "Connection issues",
+          "notify_low_rssi": "Low RSSI",
+          "notify_telemetry_lag": "Telemetry lag",
+          "notify_pv_off": "PV-Off active",
+          "notify_string_shutdown": "String shutdown",
+          "notify_active_alert_summary": "Active alerts summary",
+          "enable_sunset_alert_guard": "Suppress lag/RSSI alerts at night (sunset guard)",
           "sun_guard_min_elevation_degrees": "Sun guard minimum elevation (degrees)",
           "sun_guard_positive_power_grace_minutes": "Sun guard recent production grace (minutes)",
-          "enable_alert_feed_notifications": "Enable persistent notifications for PV-Off and active Tigo alerts",
           "stale_threshold_seconds": "Stale threshold (seconds)",
           "backfill_window_minutes": "Backfill window (minutes)",
           "recent_cutoff_minutes": "Recent cutoff (minutes)",
@@ -174,6 +184,9 @@
       },
       "array_power": {
         "name": "Array power"
+      },
+      "array_voltage": {
+        "name": "Array voltage"
       },
       "array_voltage_average": {
         "name": "Array average voltage"

@@ -25,6 +25,12 @@ from .const import (
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
+    DEFAULT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+    DEFAULT_NOTIFY_CONNECTION_ISSUES,
+    DEFAULT_NOTIFY_LOW_RSSI,
+    DEFAULT_NOTIFY_PV_OFF,
+    DEFAULT_NOTIFY_STRING_SHUTDOWN,
+    DEFAULT_NOTIFY_TELEMETRY_LAG,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
     DEFAULT_RSSI_ALERT_THRESHOLD,
@@ -42,6 +48,12 @@ from .const import (
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
+    OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+    OPT_NOTIFY_CONNECTION_ISSUES,
+    OPT_NOTIFY_LOW_RSSI,
+    OPT_NOTIFY_PV_OFF,
+    OPT_NOTIFY_STRING_SHUTDOWN,
+    OPT_NOTIFY_TELEMETRY_LAG,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
     OPT_RSSI_ALERT_THRESHOLD,
@@ -196,6 +208,10 @@ async def _async_options_updated(hass: HomeAssistant, entry: TigoConfigEntry) ->
 
 def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
     """Return options merged with defaults."""
+    legacy_alert_feed_raw = entry.options.get(OPT_ENABLE_ALERT_FEED_NOTIFICATIONS)
+    legacy_alert_feed_enabled = (
+        bool(legacy_alert_feed_raw) if legacy_alert_feed_raw is not None else None
+    )
     return {
         OPT_SUMMARY_POLL_SECONDS: int(
             entry.options.get(OPT_SUMMARY_POLL_SECONDS, DEFAULT_SUMMARY_POLL_SECONDS)
@@ -210,6 +226,54 @@ def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
             entry.options.get(
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
                 DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+            )
+        ),
+        OPT_NOTIFY_CONNECTION_ISSUES: bool(
+            entry.options.get(
+                OPT_NOTIFY_CONNECTION_ISSUES,
+                DEFAULT_NOTIFY_CONNECTION_ISSUES,
+            )
+        ),
+        OPT_NOTIFY_LOW_RSSI: bool(
+            entry.options.get(
+                OPT_NOTIFY_LOW_RSSI,
+                DEFAULT_NOTIFY_LOW_RSSI,
+            )
+        ),
+        OPT_NOTIFY_TELEMETRY_LAG: bool(
+            entry.options.get(
+                OPT_NOTIFY_TELEMETRY_LAG,
+                DEFAULT_NOTIFY_TELEMETRY_LAG,
+            )
+        ),
+        OPT_NOTIFY_PV_OFF: bool(
+            entry.options.get(
+                OPT_NOTIFY_PV_OFF,
+                (
+                    legacy_alert_feed_enabled
+                    if legacy_alert_feed_enabled is not None
+                    else DEFAULT_NOTIFY_PV_OFF
+                ),
+            )
+        ),
+        OPT_NOTIFY_STRING_SHUTDOWN: bool(
+            entry.options.get(
+                OPT_NOTIFY_STRING_SHUTDOWN,
+                (
+                    legacy_alert_feed_enabled
+                    if legacy_alert_feed_enabled is not None
+                    else DEFAULT_NOTIFY_STRING_SHUTDOWN
+                ),
+            )
+        ),
+        OPT_NOTIFY_ACTIVE_ALERT_SUMMARY: bool(
+            entry.options.get(
+                OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+                (
+                    legacy_alert_feed_enabled
+                    if legacy_alert_feed_enabled is not None
+                    else DEFAULT_NOTIFY_ACTIVE_ALERT_SUMMARY
+                ),
             )
         ),
         OPT_ENABLE_SUNSET_ALERT_GUARD: bool(

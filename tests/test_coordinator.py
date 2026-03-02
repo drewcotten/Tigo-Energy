@@ -20,6 +20,8 @@ from custom_components.tigo_energy.const import (
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
+    OPT_NOTIFY_LOW_RSSI,
+    OPT_NOTIFY_TELEMETRY_LAG,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
     OPT_RSSI_ALERT_THRESHOLD,
     OPT_RSSI_WATCH_THRESHOLD,
@@ -172,7 +174,7 @@ async def test_summary_coordinator_critical_lag_notifies_after_debounce(hass):
         client=mock_client,
         entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
         configured_system_ids={1001},
-        options={},
+        options={OPT_NOTIFY_TELEMETRY_LAG: True},
         connection_notifier=notifier,
     )
 
@@ -746,6 +748,7 @@ async def test_module_coordinator_low_rssi_alert_debounced(hass):
             OPT_RSSI_WATCH_THRESHOLD: 120,
             OPT_RSSI_ALERT_THRESHOLD: 80,
             OPT_RSSI_ALERT_CONSECUTIVE_POLLS: 2,
+            OPT_NOTIFY_LOW_RSSI: True,
         },
         connection_notifier=notifier,
     )

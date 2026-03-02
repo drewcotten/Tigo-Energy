@@ -6,12 +6,13 @@
 
 Home Assistant custom integration for **Tigo Energy Premium cloud API** telemetry.
 
-This integration supports native UI onboarding (Config Flow), in-flow authentication, and lag-aware telemetry handling for Tigo cloud data.
+This integration pulls Tigo cloud data into Home Assistant with native UI setup, account login in-flow, and practical handling for cloud-delayed minute telemetry.
+
+In plain terms: you can add your Tigo account, pick one or more systems, and get system, source, array, and panel entities without YAML.
 
 ## Documentation
 
 - [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
-- [Time-Lag Investigation Report](docs/tigo-integration-time-lag-investigation.md)
 - [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
 - [Read-Only Alerts Live Probe (2026-03-01)](docs/tigo-readonly-alerts-live-probe-2026-03-01.md)
 - [Entity Name Reference (Example IDs)](docs/entity-name-reference.md)
@@ -19,15 +20,13 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 
 ## Features
 
-- Native Home Assistant onboarding with one account entry and per-system subentries (use **Add system** to expand grouped systems under one integration).
-- Optional module telemetry from minute aggregate data: per-module input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus system-level RSSI aggregate sensors.
-- Derived array-level sensors from Tigo layout + module telemetry: array power, voltage/current aggregates, RSSI health aggregates, and reporting coverage/count metrics.
-- System and source monitoring: power/energy summary sensors plus source health sensors (check-in, control state, firmware, gateway count, serial).
-- Read-only alert and safety monitoring: alert sensors plus `PV-Off active` and `String shutdown active` binary sensors.
-- Lag-aware cloud handling: rolling backfill, short-window fallback retry, and freshness diagnostics (`telemetry_lag_status`, stale attributes).
-- Semantic panel labeling from Tigo object/layout labels (`A1`, `B4`, etc.) for cleaner device naming.
-- Sunset-aware notifications for lag/RSSI data-quality alerts, plus read-only alert-feed notifications (PV-Off, string-shutdown, active alerts).
-- Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery).
+- Native Home Assistant onboarding with one account entry and per-system subentries (**Add system** to expand).
+- System + source monitoring: power/energy summary plus source heartbeat/control/firmware/gateway state.
+- Optional module telemetry (`Pin`, `Vin`, `Iin`, `RSSI`) with semantic panel labels (`A1`, `B4`, etc.).
+- Array-level derived sensors (power, voltage/current aggregates, RSSI health, reporting coverage).
+- Read-only safety/alert visibility: `PV-Off active`, `String shutdown active`, and alert summary sensors.
+- Lag-aware cloud handling (rolling backfill, empty-window fallback, freshness/lag diagnostics).
+- Configurable persistent notifications with per-channel toggles (connection, RSSI, telemetry lag, PV-Off, string shutdown, active-alert summary).
 
 ## Tigo API Data Time Lag
 
@@ -93,8 +92,10 @@ The integration setup flow is:
    - `summary_poll_seconds` (default `60`)
    - `module_poll_seconds` (default `300`)
 6. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
-7. Choose whether Home Assistant should show persistent warning notifications (connection issues, sustained low RSSI, and critical telemetry lag). Default is `on`.
-8. Choose whether to enable sunset-aware guard for RSSI/telemetry-lag alerting and read-only alert-feed notifications (PV-Off + active alerts). Defaults are `on`.
+7. Choose notification behavior:
+   - Master toggle for persistent notifications
+   - Per-notification toggles (connection, low RSSI, telemetry lag, PV-Off, string shutdown, active-alert summary)
+8. Choose whether to enable sunset-aware guard for RSSI/telemetry-lag alerting. Default is `on`.
 9. After setup, use **Add system** on the integration page to add more system subentries under the same account entry.
 
 Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers and document a per-account cap (`100` requests/minute). Use conservative poll intervals, especially for multi-system accounts.
@@ -109,11 +110,16 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - `summary_poll_seconds` (default `60`)
 - `module_poll_seconds` (default `300`)
 - `enable_module_telemetry` (default `false`, also selectable during onboarding)
-- `enable_persistent_notifications` (default `true`, also selectable during onboarding)
+- `enable_persistent_notifications` (default `true`, master switch)
+- `notify_connection_issues` (default `true`)
+- `notify_low_rssi` (default `false`)
+- `notify_telemetry_lag` (default `false`)
+- `notify_pv_off` (default `true`)
+- `notify_string_shutdown` (default `true`)
+- `notify_active_alert_summary` (default `false`)
 - `enable_sunset_alert_guard` (default `true`)
 - `sun_guard_min_elevation_degrees` (default `3.0`)
 - `sun_guard_positive_power_grace_minutes` (default `90`)
-- `enable_alert_feed_notifications` (default `true`)
 - `stale_threshold_seconds` (default `1800`)
 - `backfill_window_minutes` (default `120`)
 - `recent_cutoff_minutes` (default `0`)
@@ -128,7 +134,7 @@ These are the exact Home Assistant sensor names created by this integration.
 Entity footprint planning:
 
 - Module telemetry off: 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors. Add 5 sensors per additional source.
-- Module telemetry on: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`), 3 RSSI aggregate sensors per system, and 14 array sensors per detected array/string.
+- Module telemetry on: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`), 3 RSSI aggregate sensors per system, and 15 array sensors per detected array/string.
 
 ### System device (`<System Name>`)
 
@@ -165,7 +171,8 @@ System entities/devices are created per configured system subentry, including ca
 ### Array device (`<System Name> Array <array_label>`, module telemetry enabled)
 
 - Array power
-- Array average voltage
+- Array voltage
+- Array average voltage (diagnostic)
 - Array minimum voltage
 - Array maximum voltage
 - Array average current
@@ -283,8 +290,8 @@ The integration can suppress data-quality alert escalation at night while keepin
 
 - **Invalid auth**: verify credentials in Tigo portal and run reauthenticate in integration UI.
 - **Cannot connect to Tigo API**: a Home Assistant persistent notification is shown while connectivity is down; it clears automatically once polling recovers.
-- **Low RSSI alert**: a Home Assistant persistent notification appears when low RSSI persists for the configured debounce window (`rssi_alert_consecutive_polls`) and auto-clears when no modules remain below `rssi_alert_threshold`.
-- **Telemetry lag alert**: a Home Assistant persistent notification appears when heartbeat-vs-telemetry lag is critical (`>=45m`) for 2 consecutive summary polls and clears when critical lag resolves.
+- **Low RSSI alert**: when `notify_low_rssi` is enabled, a Home Assistant persistent notification appears when low RSSI persists for the configured debounce window (`rssi_alert_consecutive_polls`) and auto-clears when no modules remain below `rssi_alert_threshold`.
+- **Telemetry lag alert**: when `notify_telemetry_lag` is enabled, a Home Assistant persistent notification appears when heartbeat-vs-telemetry lag is critical (`>=45m`) for 2 consecutive summary polls and clears when critical lag resolves.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
 - **Module names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.

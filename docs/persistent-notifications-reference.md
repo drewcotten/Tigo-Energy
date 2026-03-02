@@ -2,6 +2,11 @@
 
 This integration can create the following Home Assistant persistent notifications.
 
+Default profile:
+
+- On: connection issues, PV-Off active, string shutdown
+- Off: low RSSI, telemetry lag, active system alerts summary
+
 ## 1) Connection Issue
 
 - Title: `Tigo Energy: Connection issue`
@@ -48,11 +53,18 @@ This integration can create the following Home Assistant persistent notification
 
 - `enable_persistent_notifications`:
   - If `false`, none of the notifications above are created.
-- `enable_alert_feed_notifications`:
-  - Controls only alert-feed notifications:
-    - PV-Off active
-    - String shutdown alert
-    - Active system alerts
+- `notify_connection_issues`:
+  - Controls connection issue notifications.
+- `notify_low_rssi`:
+  - Controls low RSSI notifications.
+- `notify_telemetry_lag`:
+  - Controls telemetry lag notifications.
+- `notify_pv_off`:
+  - Controls PV-Off active notifications.
+- `notify_string_shutdown`:
+  - Controls string shutdown notifications.
+- `notify_active_alert_summary`:
+  - Controls active system alerts summary notifications.
 - `enable_sunset_alert_guard`:
   - Applies only to data-quality notifications:
     - Low RSSI alert

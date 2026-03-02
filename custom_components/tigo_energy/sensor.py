@@ -226,11 +226,19 @@ ARRAY_METRICS: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
+        key="array_voltage",
+        translation_key="array_voltage",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
         key="array_voltage_average",
         translation_key="array_voltage_average",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SensorEntityDescription(
         key="array_voltage_min",
@@ -881,6 +889,8 @@ class TigoArraySensor(TigoBaseEntity):
         key = self.entity_description.key
         if key == "array_power":
             return round(sum(pin_values), 1) if pin_values else None
+        if key == "array_voltage":
+            return round(sum(vin_values), 2) if vin_values else None
         if key == "array_voltage_average":
             return _mean_or_none(vin_values, precision=2)
         if key == "array_voltage_min":

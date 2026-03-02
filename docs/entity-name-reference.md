@@ -84,7 +84,8 @@ Collision note:
 ### `System_Name Array A`
 
 - Array power -> `sensor.system_<system_id>_array_string_57810_array_power`
-- Array average voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage_average`
+- Array voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage`
+- Array average voltage (diagnostic) -> `sensor.system_<system_id>_array_string_57810_array_voltage_average`
 - Array minimum voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage_min`
 - Array maximum voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage_max`
 - Array average current -> `sensor.system_<system_id>_array_string_57810_array_current_average`

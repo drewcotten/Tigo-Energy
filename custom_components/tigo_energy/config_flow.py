@@ -18,11 +18,16 @@ from .const import (
     CONF_ENTRY_MODE,
     CONF_SYSTEM_ID,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
-    DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
     DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
+    DEFAULT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+    DEFAULT_NOTIFY_CONNECTION_ISSUES,
+    DEFAULT_NOTIFY_LOW_RSSI,
+    DEFAULT_NOTIFY_PV_OFF,
+    DEFAULT_NOTIFY_STRING_SHUTDOWN,
+    DEFAULT_NOTIFY_TELEMETRY_LAG,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
     DEFAULT_RSSI_ALERT_THRESHOLD,
@@ -57,6 +62,12 @@ from .const import (
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
     OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
+    OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+    OPT_NOTIFY_CONNECTION_ISSUES,
+    OPT_NOTIFY_LOW_RSSI,
+    OPT_NOTIFY_PV_OFF,
+    OPT_NOTIFY_STRING_SHUTDOWN,
+    OPT_NOTIFY_TELEMETRY_LAG,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
     OPT_RSSI_ALERT_THRESHOLD,
@@ -120,12 +131,17 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_system_id: int | None = None
         self._enable_module_telemetry: bool = DEFAULT_ENABLE_MODULE_TELEMETRY
         self._enable_persistent_notifications: bool = DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS
+        self._notify_connection_issues: bool = DEFAULT_NOTIFY_CONNECTION_ISSUES
+        self._notify_low_rssi: bool = DEFAULT_NOTIFY_LOW_RSSI
+        self._notify_telemetry_lag: bool = DEFAULT_NOTIFY_TELEMETRY_LAG
+        self._notify_pv_off: bool = DEFAULT_NOTIFY_PV_OFF
+        self._notify_string_shutdown: bool = DEFAULT_NOTIFY_STRING_SHUTDOWN
+        self._notify_active_alert_summary: bool = DEFAULT_NOTIFY_ACTIVE_ALERT_SUMMARY
         self._enable_sunset_alert_guard: bool = DEFAULT_ENABLE_SUNSET_ALERT_GUARD
         self._sun_guard_min_elevation_degrees: float = DEFAULT_SUN_GUARD_MIN_ELEVATION_DEGREES
         self._sun_guard_positive_power_grace_minutes: int = (
             DEFAULT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES
         )
-        self._enable_alert_feed_notifications: bool = DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS
         self._summary_poll_seconds: int = DEFAULT_SUMMARY_POLL_SECONDS
         self._module_poll_seconds: int = DEFAULT_MODULE_POLL_SECONDS
         self._reauth_entry: config_entries.ConfigEntry | None = None
@@ -239,15 +255,20 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._enable_persistent_notifications = bool(
                 user_input[OPT_ENABLE_PERSISTENT_NOTIFICATIONS]
             )
+            self._notify_connection_issues = bool(user_input[OPT_NOTIFY_CONNECTION_ISSUES])
+            self._notify_low_rssi = bool(user_input[OPT_NOTIFY_LOW_RSSI])
+            self._notify_telemetry_lag = bool(user_input[OPT_NOTIFY_TELEMETRY_LAG])
+            self._notify_pv_off = bool(user_input[OPT_NOTIFY_PV_OFF])
+            self._notify_string_shutdown = bool(user_input[OPT_NOTIFY_STRING_SHUTDOWN])
+            self._notify_active_alert_summary = bool(
+                user_input[OPT_NOTIFY_ACTIVE_ALERT_SUMMARY]
+            )
             self._enable_sunset_alert_guard = bool(user_input[OPT_ENABLE_SUNSET_ALERT_GUARD])
             self._sun_guard_min_elevation_degrees = float(
                 user_input[OPT_SUN_GUARD_MIN_ELEVATION_DEGREES]
             )
             self._sun_guard_positive_power_grace_minutes = int(
                 user_input[OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES]
-            )
-            self._enable_alert_feed_notifications = bool(
-                user_input[OPT_ENABLE_ALERT_FEED_NOTIFICATIONS]
             )
             self._summary_poll_seconds = int(user_input[OPT_SUMMARY_POLL_SECONDS])
             self._module_poll_seconds = int(user_input[OPT_MODULE_POLL_SECONDS])
@@ -281,12 +302,23 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
                     OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
+                    OPT_NOTIFY_CONNECTION_ISSUES: self._notify_connection_issues,
+                    OPT_NOTIFY_LOW_RSSI: self._notify_low_rssi,
+                    OPT_NOTIFY_TELEMETRY_LAG: self._notify_telemetry_lag,
+                    OPT_NOTIFY_PV_OFF: self._notify_pv_off,
+                    OPT_NOTIFY_STRING_SHUTDOWN: self._notify_string_shutdown,
+                    OPT_NOTIFY_ACTIVE_ALERT_SUMMARY: self._notify_active_alert_summary,
+                    # Legacy compatibility key kept in options for older installs/tests.
+                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: (
+                        self._notify_pv_off
+                        or self._notify_string_shutdown
+                        or self._notify_active_alert_summary
+                    ),
                     OPT_ENABLE_SUNSET_ALERT_GUARD: self._enable_sunset_alert_guard,
                     OPT_SUN_GUARD_MIN_ELEVATION_DEGREES: self._sun_guard_min_elevation_degrees,
                     OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES: (
                         self._sun_guard_positive_power_grace_minutes
                     ),
-                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: self._enable_alert_feed_notifications,
                 },
             )
 
@@ -309,6 +341,30 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     default=self._enable_persistent_notifications,
                 ): bool,
                 vol.Required(
+                    OPT_NOTIFY_CONNECTION_ISSUES,
+                    default=self._notify_connection_issues,
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_LOW_RSSI,
+                    default=self._notify_low_rssi,
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_TELEMETRY_LAG,
+                    default=self._notify_telemetry_lag,
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_PV_OFF,
+                    default=self._notify_pv_off,
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_STRING_SHUTDOWN,
+                    default=self._notify_string_shutdown,
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+                    default=self._notify_active_alert_summary,
+                ): bool,
+                vol.Required(
                     OPT_ENABLE_SUNSET_ALERT_GUARD,
                     default=self._enable_sunset_alert_guard,
                 ): bool,
@@ -326,10 +382,6 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     MIN_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
                     MAX_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
                 ),
-                vol.Required(
-                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
-                    default=self._enable_alert_feed_notifications,
-                ): bool,
             }
         )
         return self.async_show_form(step_id="module_telemetry", data_schema=schema)
@@ -536,6 +588,12 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 OPT_RSSI_WATCH_THRESHOLD: int(user_input[OPT_RSSI_WATCH_THRESHOLD]),
                 OPT_RSSI_ALERT_THRESHOLD: int(user_input[OPT_RSSI_ALERT_THRESHOLD]),
                 OPT_RSSI_ALERT_CONSECUTIVE_POLLS: int(user_input[OPT_RSSI_ALERT_CONSECUTIVE_POLLS]),
+                # Legacy compatibility key kept in options for older installs/tests.
+                OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: bool(
+                    user_input[OPT_NOTIFY_PV_OFF]
+                    or user_input[OPT_NOTIFY_STRING_SHUTDOWN]
+                    or user_input[OPT_NOTIFY_ACTIVE_ALERT_SUMMARY]
+                ),
             }
 
             watch_threshold = clean_input[OPT_RSSI_WATCH_THRESHOLD]
@@ -546,6 +604,10 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 return self.async_create_entry(title="", data=clean_input)
 
         options = self._config_entry.options
+        legacy_alert_feed_raw = options.get(OPT_ENABLE_ALERT_FEED_NOTIFICATIONS)
+        legacy_alert_feed_enabled = (
+            bool(legacy_alert_feed_raw) if legacy_alert_feed_raw is not None else None
+        )
 
         schema = vol.Schema(
             {
@@ -567,6 +629,72 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                         options.get(
                             OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
                             DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_CONNECTION_ISSUES,
+                    default=bool(
+                        options.get(
+                            OPT_NOTIFY_CONNECTION_ISSUES,
+                            DEFAULT_NOTIFY_CONNECTION_ISSUES,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_LOW_RSSI,
+                    default=bool(
+                        options.get(
+                            OPT_NOTIFY_LOW_RSSI,
+                            DEFAULT_NOTIFY_LOW_RSSI,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_TELEMETRY_LAG,
+                    default=bool(
+                        options.get(
+                            OPT_NOTIFY_TELEMETRY_LAG,
+                            DEFAULT_NOTIFY_TELEMETRY_LAG,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_PV_OFF,
+                    default=bool(
+                        options.get(
+                            OPT_NOTIFY_PV_OFF,
+                            (
+                                legacy_alert_feed_enabled
+                                if legacy_alert_feed_enabled is not None
+                                else DEFAULT_NOTIFY_PV_OFF
+                            ),
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_STRING_SHUTDOWN,
+                    default=bool(
+                        options.get(
+                            OPT_NOTIFY_STRING_SHUTDOWN,
+                            (
+                                legacy_alert_feed_enabled
+                                if legacy_alert_feed_enabled is not None
+                                else DEFAULT_NOTIFY_STRING_SHUTDOWN
+                            ),
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+                    default=bool(
+                        options.get(
+                            OPT_NOTIFY_ACTIVE_ALERT_SUMMARY,
+                            (
+                                legacy_alert_feed_enabled
+                                if legacy_alert_feed_enabled is not None
+                                else DEFAULT_NOTIFY_ACTIVE_ALERT_SUMMARY
+                            ),
                         )
                     ),
                 ): bool,
@@ -603,15 +731,6 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                     MIN_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
                     MAX_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
                 ),
-                vol.Required(
-                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
-                    default=bool(
-                        options.get(
-                            OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
-                            DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
-                        )
-                    ),
-                ): bool,
                 vol.Required(
                     OPT_STALE_THRESHOLD_SECONDS,
                     default=int(

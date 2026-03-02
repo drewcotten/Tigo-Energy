@@ -801,6 +801,20 @@ async def test_array_sensor_computes_derived_metrics(hass):
         array_id="string_57810",
         description=_array_metric("array_power"),
     )
+    voltage_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_voltage"),
+    )
+    voltage_average_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_voltage_average"),
+    )
     coverage_sensor = TigoArraySensor(
         entry=entry,
         runtime=runtime,
@@ -824,6 +838,8 @@ async def test_array_sensor_computes_derived_metrics(hass):
     )
 
     assert power_sensor.native_value == 250.0
+    assert voltage_sensor.native_value == 80.0
+    assert voltage_average_sensor.native_value == 40.0
     assert coverage_sensor.native_value == 100.0
     assert worst_rssi_sensor.native_value == 78.0
     assert low_rssi_count_sensor.native_value == 1
