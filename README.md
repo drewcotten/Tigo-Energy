@@ -18,22 +18,12 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 
 ## Features
 
-- System performance sensors from Tigo summary data: current power, daily energy, YTD energy, and lifetime energy (`last_power_dc`, `daily_energy_dc`, `ytd_energy_dc`, `lifetime_energy_dc`).
-- Source health sensors from Tigo gateway/source data: last check-in, control state, firmware version, gateway count, and serial (`last_checkin`, `control_state`, `sw_version`, `gateway_count`, `serial`).
-- Read-only system alert sensors from Tigo alert feed: active alert count, latest alert title/code/time, and latest alert details as attributes (`/alerts/system`).
-- Additional system metadata/status sensors from system view data: system status, recent alert count, and monitored-modules flag (`status`, `recent_alert_count`, `has_monitored_modules`).
-- System safety binary sensors: PV-Off active and string shutdown active (hybrid detection from source control state + alert feed patterns).
+- Native Home Assistant onboarding with one account entry and per-system subentries (use **Add system** to expand grouped systems under one integration).
 - Optional module telemetry from minute aggregate data: per-module input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus system-level RSSI aggregate sensors.
-- Derived lag diagnostics from source heartbeat vs combined telemetry: telemetry lag (minutes), heartbeat age (minutes), and lag status attributes.
-- Lag-aware rolling backfill to handle delayed minute uploads and short-window empty responses.
-- Module identity canonicalization from Tigo object labels (`A1`, `B4`, etc.) with registry migration from raw numeric IDs.
-- Module identity fallback mapping from `system/layout` panel labels when object-label mapping is incomplete.
-- Sensor footprint:
-- Core (module telemetry off): 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors; add 5 sensors per additional source.
-  - Module telemetry on: add 4 sensors per module (`Pin`, `Vin`, `Iin`, `RSSI`) plus 3 RSSI aggregate sensors per system.
-- Native Home Assistant onboarding from **Settings > Devices & Services**.
-- In-flow login with your Tigo account (token obtained internally).
-- Proactive token renewal when login response provides an `expires` timestamp (with 401 retry fallback).
+- System and source monitoring: power/energy summary sensors plus source health sensors (check-in, control state, firmware, gateway count, serial).
+- Read-only alert and safety monitoring: alert sensors plus `PV-Off active` and `String shutdown active` binary sensors.
+- Lag-aware cloud handling: rolling backfill, short-window fallback retry, and freshness diagnostics (`telemetry_lag_status`, stale attributes).
+- Semantic panel labeling from Tigo object/layout labels (`A1`, `B4`, etc.) for cleaner device naming.
 - Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery).
 
 ## Tigo API Data Time Lag
@@ -106,6 +96,7 @@ The integration setup flow is:
 Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers and document a per-account cap (`100` requests/minute). Use conservative poll intervals, especially for multi-system accounts.
 
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
+Authentication behavior is internal: bearer tokens are obtained/stored by the integration, proactively renewed when `expires` is available, and retried once on `401` before triggering reauth.
 
 ## Options
 
@@ -125,6 +116,11 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 ## Entities
 
 These are the exact Home Assistant sensor names created by this integration.
+
+Entity footprint planning:
+
+- Module telemetry off: 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors. Add 5 sensors per additional source.
+- Module telemetry on: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`) plus 3 RSSI aggregate sensors per system.
 
 ### System device (`<System Name>`)
 
