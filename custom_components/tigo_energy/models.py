@@ -63,6 +63,31 @@ class SourceSnapshot:
 
 
 @dataclass(slots=True)
+class AlertRecord:
+    """One alert record from the system alert feed."""
+
+    alert_id: int | None
+    unique_id: int | None
+    title: str | None
+    message: str | None
+    description_html: str | None
+    added: datetime | None
+    generated: datetime | None
+    archived: bool
+
+
+@dataclass(slots=True)
+class SystemAlertState:
+    """Computed alert and shutdown state for one system."""
+
+    active_count: int
+    latest_active_alert: AlertRecord | None
+    pv_off_active: bool
+    string_shutdown_active: bool
+    alerts_supported: bool
+
+
+@dataclass(slots=True)
 class SystemSnapshot:
     """System metadata + summary + source state."""
 
@@ -84,6 +109,11 @@ class SystemSnapshot:
     heartbeat_age_seconds: float | None
     telemetry_lag_seconds: float | None
     telemetry_lag_status: str | None
+    alert_state: SystemAlertState
+    system_status: str | None = None
+    recent_alert_count: int | None = None
+    has_monitored_modules: bool | None = None
+    module_label_map: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

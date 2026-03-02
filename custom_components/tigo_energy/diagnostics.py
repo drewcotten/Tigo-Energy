@@ -71,6 +71,52 @@ async def async_get_config_entry_diagnostics(
                     "heartbeat_age_seconds": system.heartbeat_age_seconds,
                     "telemetry_lag_seconds": system.telemetry_lag_seconds,
                     "telemetry_lag_status": system.telemetry_lag_status,
+                    "system_status": system.system_status,
+                    "recent_alert_count": system.recent_alert_count,
+                    "has_monitored_modules": system.has_monitored_modules,
+                    "alerts": {
+                        "alerts_supported": system.alert_state.alerts_supported,
+                        "active_alert_count": system.alert_state.active_count,
+                        "pv_off_active": system.alert_state.pv_off_active,
+                        "string_shutdown_active": system.alert_state.string_shutdown_active,
+                        "latest_active_alert": (
+                            {
+                                "alert_id": (
+                                    system.alert_state.latest_active_alert.alert_id
+                                    if system.alert_state.latest_active_alert
+                                    else None
+                                ),
+                                "unique_id": (
+                                    system.alert_state.latest_active_alert.unique_id
+                                    if system.alert_state.latest_active_alert
+                                    else None
+                                ),
+                                "title": (
+                                    system.alert_state.latest_active_alert.title
+                                    if system.alert_state.latest_active_alert
+                                    else None
+                                ),
+                                "generated": (
+                                    system.alert_state.latest_active_alert.generated
+                                    if system.alert_state.latest_active_alert
+                                    else None
+                                ),
+                                "added": (
+                                    system.alert_state.latest_active_alert.added
+                                    if system.alert_state.latest_active_alert
+                                    else None
+                                ),
+                                "archived": (
+                                    system.alert_state.latest_active_alert.archived
+                                    if system.alert_state.latest_active_alert
+                                    else None
+                                ),
+                            }
+                            if system.alert_state.latest_active_alert
+                            else None
+                        ),
+                    },
+                    "module_label_map_count": len(system.module_label_map),
                 }
                 for system_id, system in summary_data.systems.items()
             },

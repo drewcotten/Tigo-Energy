@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -48,11 +49,13 @@ from .const import (
     OPT_SUMMARY_POLL_SECONDS,
 )
 from .models import (
+    AlertRecord,
     FreshnessState,
     ModulePoint,
     ModuleSnapshot,
     SourceSnapshot,
     SummarySnapshot,
+    SystemAlertState,
     SystemSnapshot,
 )
 from .notifications import (
@@ -63,6 +66,12 @@ from .notifications import (
 
 METRICS: tuple[str, ...] = ("Pin", "Vin", "Iin", "RSSI")
 LOGGER = logging.getLogger(__name__)
+LABEL_PATTERN = re.compile(r"^[A-Za-z]\d+$")
+PV_OFF_PATTERN = re.compile(r"\bpv[- ]?off\b|\brsd\b", flags=re.IGNORECASE)
+SHUTDOWN_PATTERN = re.compile(
+    r"\bstring shutdown\b|\bsystem shutdown\b|\bshutdown\b",
+    flags=re.IGNORECASE,
+)
 
 
 class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
@@ -84,6 +93,8 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         self._connection_notifier = connection_notifier
         self.tracked_system_ids: set[int] = set(configured_system_ids)
         self._telemetry_lag_critical_poll_streak = 0
+        self._alert_warning_system_ids: set[int] = set()
+        self._alert_type_warning_logged = False
 
         interval = int(options.get(OPT_SUMMARY_POLL_SECONDS, DEFAULT_SUMMARY_POLL_SECONDS))
         super().__init__(
@@ -137,6 +148,23 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
 
         window_end = datetime.now(UTC) - timedelta(minutes=recent_cutoff_minutes)
         window_start = window_end - timedelta(minutes=backfill_minutes)
+        alert_types_by_unique_id: dict[int, dict[str, Any]] = {}
+
+        try:
+            alert_types = await self._client.async_get_alert_types(language="EN")
+            for item in alert_types:
+                unique_id = _as_optional_int(item.get("unique_id"))
+                if unique_id is None:
+                    continue
+                alert_types_by_unique_id[unique_id] = item
+            self._alert_type_warning_logged = False
+        except TigoApiError as err:
+            if not self._alert_type_warning_logged:
+                LOGGER.warning(
+                    "Failed to load Tigo alert type catalog; falling back to alert text matching: %s",
+                    err,
+                )
+                self._alert_type_warning_logged = True
 
         systems: dict[int, SystemSnapshot] = {}
         global_latest: datetime | None = None
@@ -177,8 +205,57 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 await self._async_report_connection_recovered()
                 raise UpdateFailed(f"Failed to fetch system {system_id}: {err}") from err
 
+            alerts_supported = True
+            alerts_raw: list[dict[str, Any]] = []
+            try:
+                alerts_raw, _alerts_meta = await self._client.async_get_alerts_system(
+                    system_id=system_id,
+                    page=1,
+                    per_page=50,
+                )
+            except TigoApiError as err:
+                alerts_supported = False
+                if system_id not in self._alert_warning_system_ids:
+                    LOGGER.warning(
+                        "Failed to fetch alerts for system %s; alert entities will show unsupported: %s",
+                        system_id,
+                        err,
+                    )
+                    self._alert_warning_system_ids.add(system_id)
+            else:
+                self._alert_warning_system_ids.discard(system_id)
+
+            try:
+                objects_raw = await self._client.async_get_objects_system(system_id)
+            except TigoApiError as err:
+                objects_raw = []
+                LOGGER.debug(
+                    "Unable to load objects for system %s; module labels may remain raw: %s",
+                    system_id,
+                    err,
+                )
+
             combined = systems_from_api.get(system_id, {})
             system_timezone = _as_optional_str(details.get("timezone") or combined.get("timezone"))
+            module_label_map = _build_module_label_map(objects_raw)
+            if not module_label_map:
+                try:
+                    layout_raw = await self._client.async_get_system_layout(system_id)
+                except TigoApiError as err:
+                    LOGGER.debug(
+                        "Unable to load system layout for system %s; module labels may remain raw: %s",
+                        system_id,
+                        err,
+                    )
+                else:
+                    module_label_map = _build_module_label_map_from_layout(layout_raw)
+            alert_records = [_build_alert_record(alert) for alert in alerts_raw]
+            alert_state = _build_alert_state(
+                alerts=alert_records,
+                sources=sources_raw,
+                alert_types_by_unique_id=alert_types_by_unique_id,
+                alerts_supported=alerts_supported,
+            )
 
             source_snapshots: list[SourceSnapshot] = []
             system_latest: datetime | None = parse_tigo_timestamp(summary.get("updated_on"))
@@ -274,6 +351,15 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 heartbeat_age_seconds=heartbeat_age_seconds,
                 telemetry_lag_seconds=telemetry_lag_seconds,
                 telemetry_lag_status=telemetry_lag_status,
+                alert_state=alert_state,
+                system_status=_as_optional_str(details.get("status") or combined.get("status")),
+                recent_alert_count=_as_optional_int(
+                    details.get("recent_alert_count") or combined.get("recent_alert_count")
+                ),
+                has_monitored_modules=_as_optional_bool(
+                    details.get("has_monitored_modules") if "has_monitored_modules" in details else combined.get("has_monitored_modules")
+                ),
+                module_label_map=module_label_map,
             )
 
             systems[system_id] = system_snapshot
@@ -480,6 +566,8 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 system_timezone=system_timezone,
                 hass_timezone=self.hass.config.time_zone,
             )
+            module_label_map = _system_module_label_map(self._summary_coordinator.data.systems, system_id)
+            self._canonicalize_cached_points_for_system(system_id, module_label_map)
 
             for metric in METRICS:
                 try:
@@ -516,9 +604,10 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 future_rows_dropped += parsed.future_rows_dropped
                 invalid_timestamp_rows += parsed.invalid_timestamp_rows
 
-                for module_id, points in parsed.rows_by_module.items():
+                for raw_module_id, points in parsed.rows_by_module.items():
                     if not points:
                         continue
+                    module_id = module_label_map.get(str(raw_module_id), str(raw_module_id))
                     point_ts, point_value = max(points, key=lambda item: item[0])
                     key = (system_id, module_id, metric)
                     current = self._points_by_key.get(key)
@@ -587,6 +676,42 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             watch_rssi_module_count=watch_rssi_count,
             worst_rssi=worst_rssi,
         )
+
+    def _canonicalize_cached_points_for_system(
+        self,
+        system_id: int,
+        module_label_map: Mapping[str, str],
+    ) -> None:
+        """Remap cached module keys to semantic labels when available."""
+        if not module_label_map:
+            return
+
+        remapped: dict[tuple[int, str, str], ModulePoint] = {}
+        stale_keys: list[tuple[int, str, str]] = []
+
+        for key, point in self._points_by_key.items():
+            point_system_id, raw_module_id, metric = key
+            if point_system_id != system_id:
+                continue
+            canonical_module_id = module_label_map.get(raw_module_id, raw_module_id)
+            if canonical_module_id == raw_module_id:
+                continue
+
+            stale_keys.append(key)
+            new_key = (point_system_id, canonical_module_id, metric)
+            current = self._points_by_key.get(new_key) or remapped.get(new_key)
+            if current is None or point.timestamp > current.timestamp:
+                remapped[new_key] = ModulePoint(
+                    system_id=point_system_id,
+                    module_id=canonical_module_id,
+                    metric=metric,
+                    value=point.value,
+                    timestamp=point.timestamp,
+                )
+
+        for key in stale_keys:
+            self._points_by_key.pop(key, None)
+        self._points_by_key.update(remapped)
 
     async def _async_fetch_metric_with_fallback(
         self,
@@ -686,6 +811,160 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         await self._connection_notifier.async_clear_low_rssi_alert()
 
 
+def _build_module_label_map(objects_raw: list[dict[str, Any]]) -> dict[str, str]:
+    """Build raw object id => semantic module label map."""
+    label_map: dict[str, str] = {}
+    for obj in objects_raw:
+        raw_id = obj.get("object_id") if obj.get("object_id") not in (None, "") else obj.get("id")
+        label = _as_optional_str(obj.get("label"))
+        if raw_id in (None, "") or not label or not LABEL_PATTERN.match(label):
+            continue
+        label_map[str(raw_id)] = label
+    return label_map
+
+
+def _build_module_label_map_from_layout(layout_raw: dict[str, Any]) -> dict[str, str]:
+    """Build module label map from /system/layout nested panel structure."""
+    label_map: dict[str, str] = {}
+
+    for inverter in layout_raw.get("inverters", []):
+        if not isinstance(inverter, dict):
+            continue
+        for mppt in inverter.get("mppts", []):
+            if not isinstance(mppt, dict):
+                continue
+            for string_data in mppt.get("strings", []):
+                if not isinstance(string_data, dict):
+                    continue
+                for panel in string_data.get("panels", []):
+                    if not isinstance(panel, dict):
+                        continue
+                    label = _as_optional_str(panel.get("label"))
+                    if not label or not LABEL_PATTERN.match(label):
+                        continue
+                    for key in ("object_id", "panel_id"):
+                        raw_id = panel.get(key)
+                        if raw_id in (None, ""):
+                            continue
+                        label_map[str(raw_id)] = label
+
+    return label_map
+
+
+def _build_alert_record(alert: dict[str, Any]) -> AlertRecord:
+    """Normalize one raw alert payload into AlertRecord."""
+    return AlertRecord(
+        alert_id=_as_optional_int(alert.get("alert_id") or alert.get("id")),
+        unique_id=_as_optional_int(alert.get("unique_id")),
+        title=_as_optional_str(alert.get("title")),
+        message=_as_optional_str(alert.get("message")),
+        description_html=_as_optional_str(alert.get("description")),
+        added=parse_tigo_timestamp(alert.get("added")),
+        generated=parse_tigo_timestamp(alert.get("generated")),
+        archived=bool(alert.get("archived")),
+    )
+
+
+def _build_alert_state(
+    *,
+    alerts: list[AlertRecord],
+    sources: list[dict[str, Any]],
+    alert_types_by_unique_id: Mapping[int, dict[str, Any]],
+    alerts_supported: bool,
+) -> SystemAlertState:
+    """Build computed system alert and shutdown state."""
+    active_alerts = [alert for alert in alerts if not alert.archived]
+    latest_active_alert = _latest_active_alert(active_alerts)
+    pv_off_from_control_state = any(
+        _control_state_indicates_pv_off(_as_optional_str(source.get("control_state")))
+        for source in sources
+        if isinstance(source, dict)
+    )
+    pv_off_from_alerts = any(
+        _alert_matches_pv_off(alert, alert_types_by_unique_id=alert_types_by_unique_id)
+        for alert in active_alerts
+    )
+    string_shutdown_active = any(
+        _alert_matches_string_shutdown(alert, alert_types_by_unique_id=alert_types_by_unique_id)
+        for alert in active_alerts
+    )
+    return SystemAlertState(
+        active_count=len(active_alerts),
+        latest_active_alert=latest_active_alert,
+        pv_off_active=pv_off_from_control_state or pv_off_from_alerts,
+        string_shutdown_active=string_shutdown_active,
+        alerts_supported=alerts_supported,
+    )
+
+
+def _latest_active_alert(alerts: list[AlertRecord]) -> AlertRecord | None:
+    """Return most recent active alert by generated timestamp then added."""
+    if not alerts:
+        return None
+    return max(
+        alerts,
+        key=lambda alert: (
+            alert.generated or datetime.min.replace(tzinfo=UTC),
+            alert.added or datetime.min.replace(tzinfo=UTC),
+        ),
+    )
+
+
+def _alert_text_blob(alert: AlertRecord, alert_type: dict[str, Any] | None) -> str:
+    """Build lowercase text blob used for pattern matching."""
+    parts: list[str] = []
+    if alert.unique_id is not None:
+        parts.append(str(alert.unique_id))
+    for text in (
+        alert.title,
+        alert.message,
+        alert.description_html,
+        _as_optional_str(alert_type.get("title")) if alert_type else None,
+        _as_optional_str(alert_type.get("description")) if alert_type else None,
+    ):
+        if text:
+            parts.append(text)
+    return " ".join(parts).lower()
+
+
+def _alert_matches_pv_off(
+    alert: AlertRecord,
+    *,
+    alert_types_by_unique_id: Mapping[int, dict[str, Any]],
+) -> bool:
+    alert_type = (
+        alert_types_by_unique_id.get(alert.unique_id)
+        if alert.unique_id is not None
+        else None
+    )
+    text_blob = _alert_text_blob(alert, alert_type)
+    return bool(PV_OFF_PATTERN.search(text_blob))
+
+
+def _alert_matches_string_shutdown(
+    alert: AlertRecord,
+    *,
+    alert_types_by_unique_id: Mapping[int, dict[str, Any]],
+) -> bool:
+    alert_type = (
+        alert_types_by_unique_id.get(alert.unique_id)
+        if alert.unique_id is not None
+        else None
+    )
+    text_blob = _alert_text_blob(alert, alert_type)
+    return bool(SHUTDOWN_PATTERN.search(text_blob))
+
+
+def _control_state_indicates_pv_off(control_state: str | None) -> bool:
+    """Return true when source control_state indicates PV-off condition."""
+    if not control_state:
+        return False
+    normalized = control_state.strip().lower()
+    if normalized in {"off", "pvoff", "pv_off", "pv-off"}:
+        return True
+    return "off" in normalized and "pv" in normalized
+
+
 def _extract_source_latest_timestamp(source: dict[str, Any]) -> datetime | None:
     """Extract latest dataset timestamp from source.sets[] and known keys."""
     candidates: list[datetime] = []
@@ -738,6 +1017,21 @@ def _as_optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_optional_bool(value: Any) -> bool | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "on"}:
+        return True
+    if text in {"false", "0", "no", "off"}:
+        return False
+    return None
 
 
 def _compute_rssi_health(
@@ -840,3 +1134,14 @@ def _system_timezone_for_id(systems: Mapping[int, SystemSnapshot], system_id: in
     if system is None:
         return None
     return system.timezone
+
+
+def _system_module_label_map(
+    systems: Mapping[int, SystemSnapshot],
+    system_id: int,
+) -> Mapping[str, str]:
+    """Return raw module id => semantic label map for one system."""
+    system = systems.get(system_id)
+    if system is None:
+        return {}
+    return system.module_label_map

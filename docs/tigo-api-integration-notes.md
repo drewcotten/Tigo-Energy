@@ -18,6 +18,8 @@ Use this guide when you are building collectors, alerts, automation, or BI inges
 - `/sources/system`
 - `/data/aggregate`
 - `/data/combined`
+- `/alerts/system`
+- `/alerts/types`
 
 ## TL;DR (The Important Stuff)
 
@@ -31,10 +33,12 @@ Use this guide when you are building collectors, alerts, automation, or BI inges
 8. API freshness lag is variable; build lag-aware alerts rather than assuming real-time parity.
 9. Short-window history pulls can intermittently return empty history while wider windows return data; treat cause as unresolved and code defensively.
 
-Status in this integration as of the v1.1 hardening pass:
+Status in this integration as of the read-only alert/system expansion pass:
 
 - implemented: login fallback (`POST -> GET`), flexible token extraction, proactive token refresh using `expires`, bounded 429 retry with `Retry-After`, site-local CSV timestamp parsing, short-window fallback, and future-row filtering.
 - implemented: stale/freshness is surfaced as diagnostics attributes (`system_data_*`, `module_data_*`) while expected cloud lag keeps entities available when coordinator updates are healthy.
+- implemented: read-only alert ingestion (`/alerts/system`) with system-level alert entities and shutdown/PV-Off binary sensors.
+- implemented: module label canonicalization from `/objects/system` labels (`A1`, `B4`, etc.), with `/system/layout` panel-label fallback and registry migration from raw numeric module IDs when available.
 
 ## Key Behavioral Quirks
 

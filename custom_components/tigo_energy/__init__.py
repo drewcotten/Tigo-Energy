@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .api import TigoApiAuthError, TigoApiClient, TigoApiConnectionError, TigoAuthCredentials
 from .const import (
@@ -24,6 +28,7 @@ from .const import (
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
+    DOMAIN,
     ENTRY_MODE_SINGLE_SYSTEM,
     OPT_BACKFILL_WINDOW_MINUTES,
     OPT_ENABLE_MODULE_TELEMETRY,
@@ -42,6 +47,10 @@ from .models import TigoRuntimeData
 from .notifications import CONNECTION_SOURCE_SETUP, TigoConnectionNotifier
 
 type TigoConfigEntry = ConfigEntry[TigoRuntimeData]
+LOGGER = logging.getLogger(__name__)
+MODULE_UNIQUE_ID_PATTERN = re.compile(
+    r"^(?P<system_id>\d+)_(?P<module_id>.+)_(?P<metric>Pin|Vin|Iin|RSSI)$"
+)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -124,6 +133,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: TigoConfigEntry) -> bool
         tracked_system_ids=tracked_system_ids,
         connection_notifier=connection_notifier,
     )
+
+    await _async_migrate_module_ids_to_semantic_labels(
+        hass=hass,
+        entry=entry,
+        module_label_map_by_system=_module_label_map_by_system(summary_coordinator.data.systems),
+    )
+
     runtime_data.unsub_update_listener = entry.add_update_listener(_async_options_updated)
     entry.runtime_data = runtime_data
 
@@ -188,3 +204,112 @@ def _merged_options(entry: ConfigEntry) -> dict[str, Any]:
             )
         ),
     }
+
+
+def _module_label_map_by_system(
+    systems: dict[int, Any],
+) -> dict[int, dict[str, str]]:
+    """Return per-system raw module id => semantic label mappings."""
+    result: dict[int, dict[str, str]] = {}
+    for system_id, system in systems.items():
+        labels = {
+            raw_id: label
+            for raw_id, label in system.module_label_map.items()
+            if raw_id and label and raw_id != label
+        }
+        if labels:
+            result[system_id] = labels
+    return result
+
+
+async def _async_migrate_module_ids_to_semantic_labels(
+    *,
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    module_label_map_by_system: dict[int, dict[str, str]],
+) -> None:
+    """Migrate module entity/device registry identifiers to semantic labels."""
+    if not module_label_map_by_system:
+        return
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    entity_entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+
+    device_id_renames: dict[str, set[tuple[str, str]]] = {}
+    for entity_entry in entity_entries:
+        unique_id = entity_entry.unique_id or ""
+        prefix = f"{entry.entry_id}_module_"
+        if not unique_id.startswith(prefix):
+            continue
+
+        suffix = unique_id[len(prefix) :]
+        match = MODULE_UNIQUE_ID_PATTERN.match(suffix)
+        if match is None:
+            continue
+
+        system_id = int(match.group("system_id"))
+        raw_module_id = match.group("module_id")
+        metric = match.group("metric")
+        label_map = module_label_map_by_system.get(system_id, {})
+        semantic_module_id = label_map.get(raw_module_id)
+        if semantic_module_id is None or semantic_module_id == raw_module_id:
+            continue
+
+        new_unique_id = (
+            f"{entry.entry_id}_module_{system_id}_{semantic_module_id}_{metric}"
+        )
+        existing_entity_id = entity_registry.async_get_entity_id(
+            entity_entry.domain,
+            entity_entry.platform,
+            new_unique_id,
+        )
+        if existing_entity_id and existing_entity_id != entity_entry.entity_id:
+            LOGGER.warning(
+                "Skipping module unique_id migration for %s due to conflict with %s",
+                entity_entry.entity_id,
+                existing_entity_id,
+            )
+            continue
+
+        entity_registry.async_update_entity(
+            entity_entry.entity_id,
+            new_unique_id=new_unique_id,
+        )
+        LOGGER.debug(
+            "Migrated module entity unique_id for %s: %s -> %s",
+            entity_entry.entity_id,
+            unique_id,
+            new_unique_id,
+        )
+
+        if entity_entry.device_id:
+            device_id_renames.setdefault(entity_entry.device_id, set()).add(
+                (f"module_{system_id}_{raw_module_id}", f"module_{system_id}_{semantic_module_id}")
+            )
+
+    for device_id, renames in device_id_renames.items():
+        device_entry = device_registry.async_get(device_id)
+        if device_entry is None:
+            continue
+        identifiers = set(device_entry.identifiers)
+        updated = False
+        for old_id, new_id in renames:
+            old_identifier = (DOMAIN, old_id)
+            new_identifier = (DOMAIN, new_id)
+            if old_identifier not in identifiers:
+                continue
+            existing_device = device_registry.async_get_device(identifiers={new_identifier})
+            if existing_device and existing_device.id != device_id:
+                LOGGER.warning(
+                    "Skipping module device identifier migration for %s due to conflict on %s",
+                    device_id,
+                    new_identifier,
+                )
+                continue
+            identifiers.discard(old_identifier)
+            identifiers.add(new_identifier)
+            updated = True
+
+        if updated:
+            device_registry.async_update_device(device_id, new_identifiers=identifiers)

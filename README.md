@@ -13,16 +13,22 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 - [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
 - [Time-Lag Investigation Report](docs/tigo-integration-time-lag-investigation.md)
 - [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
+- [Read-Only Alerts Live Probe (2026-03-01)](docs/tigo-readonly-alerts-live-probe-2026-03-01.md)
 
 ## Features
 
 - System performance sensors from Tigo summary data: current power, daily energy, YTD energy, and lifetime energy (`last_power_dc`, `daily_energy_dc`, `ytd_energy_dc`, `lifetime_energy_dc`).
 - Source health sensors from Tigo gateway/source data: last check-in, control state, firmware version, gateway count, and serial (`last_checkin`, `control_state`, `sw_version`, `gateway_count`, `serial`).
+- Read-only system alert sensors from Tigo alert feed: active alert count, latest alert title/code/time, and latest alert details as attributes (`/alerts/system`).
+- Additional system metadata/status sensors from system view data: system status, recent alert count, and monitored-modules flag (`status`, `recent_alert_count`, `has_monitored_modules`).
+- System safety binary sensors: PV-Off active and string shutdown active (hybrid detection from source control state + alert feed patterns).
 - Optional module telemetry from minute aggregate data: per-module input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus system-level RSSI aggregate sensors.
 - Derived lag diagnostics from source heartbeat vs combined telemetry: telemetry lag (minutes), heartbeat age (minutes), and lag status attributes.
 - Lag-aware rolling backfill to handle delayed minute uploads and short-window empty responses.
+- Module identity canonicalization from Tigo object labels (`A1`, `B4`, etc.) with registry migration from raw numeric IDs.
+- Module identity fallback mapping from `system/layout` panel labels when object-label mapping is incomplete.
 - Sensor footprint:
-  - Core (module telemetry off): 12 sensors per system when one source is present (7 system-level + 5 source-level); add 5 sensors per additional source.
+- Core (module telemetry off): 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors; add 5 sensors per additional source.
   - Module telemetry on: add 4 sensors per module (`Pin`, `Vin`, `Iin`, `RSSI`) plus 3 RSSI aggregate sensors per system.
 - Native Home Assistant onboarding from **Settings > Devices & Services**.
 - In-flow login with your Tigo account (token obtained internally).
@@ -127,8 +133,20 @@ These are the exact Home Assistant sensor names created by this integration.
 - Latest stable data timestamp
 - Telemetry lag
 - Heartbeat age
+- System status
+- Recent alert count
+- Has monitored modules
+- Active alert count
+- Latest alert title
+- Latest alert code
+- Latest alert time
 
 System entities/devices are created per tracked system in both `single_system` and `all_systems` entry modes, including cases where module telemetry is discovered before full summary payloads are available.
+
+### System binary sensors (`<System Name>`)
+
+- PV-Off active
+- String shutdown active
 
 ### Source device (`<Source Name>`)
 
@@ -172,6 +190,17 @@ Telemetry lag and heartbeat age entities expose additional attributes for lag di
 - `latest_source_checkin`
 - `latest_non_empty_telemetry_timestamp`
 
+### Alert Attributes
+
+Alert sensors and alert binary sensors expose:
+
+- `alerts_supported`
+- `latest_alert_id`
+- `latest_alert_unique_id`
+- `latest_alert_message`
+- `latest_alert_description_html`
+- `latest_alert_archived`
+
 System and module entities also expose freshness context:
 
 - `system_data_timestamp`
@@ -199,6 +228,7 @@ Availability behavior:
 
 - Entities stay available during expected cloud lag when coordinator updates are healthy and entity data exists.
 - Freshness is represented via lag/stale attributes and diagnostic sensors.
+- Alert entities are read-only and remain available even when no active alerts are present (`active_alert_count=0`).
 
 Timestamp handling rules:
 
@@ -214,6 +244,7 @@ Timestamp handling rules:
 - **Telemetry lag alert**: a Home Assistant persistent notification appears when heartbeat-vs-telemetry lag is critical (`>=45m`) for 2 consecutive summary polls and clears when critical lag resolves.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
+- **Module names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.
 - **Too many entities**: disable module telemetry or increase module poll interval.
 
 ## Development

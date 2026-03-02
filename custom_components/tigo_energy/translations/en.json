@@ -101,6 +101,27 @@
       "heartbeat_age_minutes": {
         "name": "Heartbeat age"
       },
+      "system_status": {
+        "name": "System status"
+      },
+      "recent_alert_count": {
+        "name": "Recent alert count"
+      },
+      "has_monitored_modules": {
+        "name": "Has monitored modules"
+      },
+      "active_alert_count": {
+        "name": "Active alert count"
+      },
+      "latest_alert_title": {
+        "name": "Latest alert title"
+      },
+      "latest_alert_code": {
+        "name": "Latest alert code"
+      },
+      "latest_alert_time": {
+        "name": "Latest alert time"
+      },
       "source_last_checkin": {
         "name": "Last check-in"
       },
@@ -136,6 +157,14 @@
       },
       "worst_module_rssi": {
         "name": "Worst module RSSI"
+      }
+    },
+    "binary_sensor": {
+      "pv_off_active": {
+        "name": "PV-Off active"
+      },
+      "string_shutdown_active": {
+        "name": "String shutdown active"
       }
     }
   }

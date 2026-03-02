@@ -75,6 +75,9 @@ class ParsedAggregateCsv:
 
 
 MODULE_METRICS = frozenset({"pin", "vin", "iin", "rssi"})
+ALERT_TYPES_CACHE_TTL = timedelta(hours=24)
+OBJECTS_CACHE_TTL = timedelta(hours=6)
+LAYOUT_CACHE_TTL = timedelta(hours=6)
 
 
 class TigoApiClient:
@@ -97,6 +100,9 @@ class TigoApiClient:
         self._token_state: TigoTokenState | None = None
         self._account_id: str | None = None
         self._login_lock = asyncio.Lock()
+        self._alert_types_cache: tuple[datetime, list[dict[str, Any]]] | None = None
+        self._objects_cache: dict[int, tuple[datetime, list[dict[str, Any]]]] = {}
+        self._layout_cache: dict[int, tuple[datetime, dict[str, Any]]] = {}
 
     @property
     def account_id(self) -> str | None:
@@ -186,6 +192,99 @@ class TigoApiClient:
         if not isinstance(sources, list):
             return []
         return sources
+
+    async def async_get_alerts_system(
+        self,
+        system_id: int,
+        *,
+        page: int = 1,
+        per_page: int = 50,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Get alerts feed for one system and return records + meta."""
+        data = await self._async_request_json(
+            "GET",
+            "/alerts/system",
+            params={
+                "system_id": system_id,
+                "page": page,
+                "limit": per_page,
+            },
+        )
+        alerts = (
+            data.get("alerts")
+            or data.get("Alerts")
+            or data.get("alert")
+            or data.get("Alert")
+            or []
+        )
+        if not isinstance(alerts, list):
+            alerts = []
+        meta = data.get("_meta") if isinstance(data.get("_meta"), dict) else None
+        return alerts, meta
+
+    async def async_get_alert_types(self, language: str = "EN") -> list[dict[str, Any]]:
+        """Get alert type catalog with short-lived in-memory caching."""
+        now = datetime.now(UTC)
+        if self._alert_types_cache and now - self._alert_types_cache[0] < ALERT_TYPES_CACHE_TTL:
+            return list(self._alert_types_cache[1])
+
+        data = await self._async_request_json(
+            "GET",
+            "/alerts/types",
+            params={"language": language},
+        )
+        alert_types = (
+            data.get("alert_types")
+            or data.get("alerts_types")
+            or data.get("alertType")
+            or []
+        )
+        if not isinstance(alert_types, list):
+            alert_types = []
+
+        normalized = [item for item in alert_types if isinstance(item, dict)]
+        self._alert_types_cache = (now, normalized)
+        return list(normalized)
+
+    async def async_get_objects_system(self, system_id: int) -> list[dict[str, Any]]:
+        """Get objects for one system with short-lived in-memory caching."""
+        now = datetime.now(UTC)
+        cached = self._objects_cache.get(system_id)
+        if cached and now - cached[0] < OBJECTS_CACHE_TTL:
+            return list(cached[1])
+
+        data = await self._async_request_json(
+            "GET",
+            "/objects/system",
+            params={"system_id": system_id},
+        )
+        objects = data.get("objects") if isinstance(data.get("objects"), list) else []
+        normalized = [item for item in objects if isinstance(item, dict)]
+        self._objects_cache[system_id] = (now, normalized)
+        return list(normalized)
+
+    async def async_get_system_layout(self, system_id: int) -> dict[str, Any]:
+        """Get system layout payload with short-lived in-memory caching."""
+        now = datetime.now(UTC)
+        cached = self._layout_cache.get(system_id)
+        if cached and now - cached[0] < LAYOUT_CACHE_TTL:
+            return dict(cached[1])
+
+        data = await self._async_request_json(
+            "GET",
+            "/system/layout",
+            params={"id": system_id},
+        )
+        layout = data.get("systems")
+        if isinstance(layout, dict):
+            normalized = layout
+        elif isinstance(layout, list) and layout and isinstance(layout[0], dict):
+            normalized = layout[0]
+        else:
+            normalized = data
+
+        self._layout_cache[system_id] = (now, normalized)
+        return dict(normalized)
 
     async def async_get_aggregate_csv(
         self,

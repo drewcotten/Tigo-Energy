@@ -290,6 +290,99 @@ async def test_combined_csv_falls_back_to_legacy_params(hass):
     assert params["header"] == "id"
 
 
+async def test_get_alerts_system_normalizes_keys(hass):
+    """Alerts endpoint parsing should accept lowercase and uppercase keys."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with aioresponses() as mocked:
+        mocked.post(
+            f"{BASE}/user/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        mocked.get(
+            re.compile(rf"{BASE}/alerts/system.*"),
+            status=200,
+            payload={"Alerts": [{"alert_id": 1, "title": "x"}], "_meta": {"totalCount": 1}},
+        )
+
+        alerts, meta = await client.async_get_alerts_system(1001)
+
+    assert len(alerts) == 1
+    assert alerts[0]["alert_id"] == 1
+    assert meta == {"totalCount": 1}
+
+
+async def test_get_alert_types_supports_primary_key_and_caches(hass):
+    """Alert types should parse under alert_types and cache results."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with aioresponses() as mocked:
+        mocked.post(
+            f"{BASE}/user/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        mocked.get(
+            re.compile(rf"{BASE}/alerts/types.*"),
+            status=200,
+            payload={"alert_types": [{"alert_type_id": 1, "unique_id": 42, "title": "pv-off"}]},
+        )
+
+        first = await client.async_get_alert_types()
+        second = await client.async_get_alert_types()
+
+    assert len(first) == 1
+    assert first[0]["unique_id"] == 42
+    assert second == first
+
+
+async def test_get_objects_system_caches_by_system(hass):
+    """Objects endpoint should cache per-system results."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with aioresponses() as mocked:
+        mocked.post(
+            f"{BASE}/user/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        mocked.get(
+            re.compile(rf"{BASE}/objects/system.*system_id=1001.*"),
+            status=200,
+            payload={"objects": [{"id": 89287797, "label": "A1"}]},
+        )
+
+        first = await client.async_get_objects_system(1001)
+        second = await client.async_get_objects_system(1001)
+
+    assert len(first) == 1
+    assert first[0]["label"] == "A1"
+    assert second == first
+
+
+async def test_get_system_layout_parses_systems_object(hass):
+    """System layout should parse systems object payload shape."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with aioresponses() as mocked:
+        mocked.post(
+            f"{BASE}/user/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        mocked.get(
+            re.compile(rf"{BASE}/system/layout.*"),
+            status=200,
+            payload={"systems": {"system_id": 1001, "inverters": []}},
+        )
+
+        layout = await client.async_get_system_layout(1001)
+
+    assert layout["system_id"] == 1001
+    assert layout["inverters"] == []
+
+
 async def test_aggregate_csv_uses_key_header(hass):
     """Aggregate telemetry request should request semantic key headers."""
     client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))

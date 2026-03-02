@@ -18,10 +18,16 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    ATTR_ALERTS_SUPPORTED,
     ATTR_DATA_LAG_SECONDS,
     ATTR_IS_STALE,
     ATTR_LAG_CRITICAL_MINUTES,
     ATTR_LAG_WARNING_MINUTES,
+    ATTR_LATEST_ALERT_ARCHIVED,
+    ATTR_LATEST_ALERT_DESCRIPTION_HTML,
+    ATTR_LATEST_ALERT_ID,
+    ATTR_LATEST_ALERT_MESSAGE,
+    ATTR_LATEST_ALERT_UNIQUE_ID,
     ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP,
     ATTR_LATEST_SOURCE_CHECKIN,
     ATTR_LATEST_STABLE_TIMESTAMP,
@@ -49,6 +55,7 @@ from .models import (
     ModuleSnapshot,
     SourceSnapshot,
     SummarySnapshot,
+    SystemAlertState,
     SystemSnapshot,
     TigoRuntimeData,
 )
@@ -134,6 +141,47 @@ SYSTEM_METRICS: tuple[SystemMetricDescription, ...] = (
         translation_key="heartbeat_age_minutes",
         unit=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+ALERT_METRICS: tuple[SystemMetricDescription, ...] = (
+    SystemMetricDescription(
+        key="system_status",
+        translation_key="system_status",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="recent_alert_count",
+        translation_key="recent_alert_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="has_monitored_modules",
+        translation_key="has_monitored_modules",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="active_alert_count",
+        translation_key="active_alert_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="latest_alert_title",
+        translation_key="latest_alert_title",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="latest_alert_code",
+        translation_key="latest_alert_code",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SystemMetricDescription(
+        key="latest_alert_time",
+        translation_key="latest_alert_time",
+        device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
@@ -289,7 +337,7 @@ class TigoEntityManager:
     def _new_system_entities(self, system_ids: set[int]) -> list[SensorEntity]:
         new_entities: list[SensorEntity] = []
         for system_id in sorted(system_ids):
-            for description in SYSTEM_METRICS:
+            for description in (*SYSTEM_METRICS, *ALERT_METRICS):
                 key = (system_id, description.key)
                 if key in self._known_system_metric_keys:
                     continue
@@ -484,6 +532,25 @@ class TigoSystemSensor(TigoBaseEntity):
             return _seconds_to_minutes(system.telemetry_lag_seconds)
         if self.entity_description.key == "heartbeat_age_minutes":
             return _seconds_to_minutes(system.heartbeat_age_seconds)
+        if self.entity_description.key == "active_alert_count":
+            return system.alert_state.active_count
+        if self.entity_description.key == "system_status":
+            return system.system_status
+        if self.entity_description.key == "recent_alert_count":
+            return system.recent_alert_count
+        if self.entity_description.key == "has_monitored_modules":
+            return system.has_monitored_modules
+        if self.entity_description.key == "latest_alert_title":
+            latest = system.alert_state.latest_active_alert
+            return latest.title if latest else None
+        if self.entity_description.key == "latest_alert_code":
+            latest = system.alert_state.latest_active_alert
+            return latest.unique_id if latest else None
+        if self.entity_description.key == "latest_alert_time":
+            latest = system.alert_state.latest_active_alert
+            if latest is None:
+                return None
+            return latest.generated or latest.added
 
         value = system.summary.get(self.entity_description.key)
 
@@ -495,21 +562,30 @@ class TigoSystemSensor(TigoBaseEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs = super().extra_state_attributes
-        if self.entity_description.key not in {"telemetry_lag_minutes", "heartbeat_age_minutes"}:
-            return attrs
-
         system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
-        attrs.update(
-            {
-                ATTR_TELEMETRY_LAG_STATUS: system.telemetry_lag_status if system else None,
-                ATTR_LAG_WARNING_MINUTES: LAG_WARNING_MINUTES,
-                ATTR_LAG_CRITICAL_MINUTES: LAG_CRITICAL_MINUTES,
-                ATTR_LATEST_SOURCE_CHECKIN: system.latest_source_checkin if system else None,
-                ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP: (
-                    system.latest_non_empty_telemetry_timestamp if system else None
-                ),
-            }
-        )
+        if self.entity_description.key in {"telemetry_lag_minutes", "heartbeat_age_minutes"}:
+            attrs.update(
+                {
+                    ATTR_TELEMETRY_LAG_STATUS: system.telemetry_lag_status if system else None,
+                    ATTR_LAG_WARNING_MINUTES: LAG_WARNING_MINUTES,
+                    ATTR_LAG_CRITICAL_MINUTES: LAG_CRITICAL_MINUTES,
+                    ATTR_LATEST_SOURCE_CHECKIN: system.latest_source_checkin if system else None,
+                    ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP: (
+                        system.latest_non_empty_telemetry_timestamp if system else None
+                    ),
+                }
+            )
+
+        if self.entity_description.key in {
+            "system_status",
+            "recent_alert_count",
+            "has_monitored_modules",
+            "active_alert_count",
+            "latest_alert_title",
+            "latest_alert_code",
+            "latest_alert_time",
+        }:
+            attrs.update(_alert_attributes(system.alert_state if system else None))
         return attrs
 
 
@@ -760,6 +836,19 @@ def _system_sw_version(system: SystemSnapshot | None) -> str | None:
         if source.sw_version:
             return source.sw_version
     return None
+
+
+def _alert_attributes(alert_state: SystemAlertState | None) -> dict[str, Any]:
+    """Return standardized alert attributes for alert sensors."""
+    latest = alert_state.latest_active_alert if alert_state else None
+    return {
+        ATTR_ALERTS_SUPPORTED: alert_state.alerts_supported if alert_state else False,
+        ATTR_LATEST_ALERT_ID: latest.alert_id if latest else None,
+        ATTR_LATEST_ALERT_UNIQUE_ID: latest.unique_id if latest else None,
+        ATTR_LATEST_ALERT_MESSAGE: latest.message if latest else None,
+        ATTR_LATEST_ALERT_DESCRIPTION_HTML: latest.description_html if latest else None,
+        ATTR_LATEST_ALERT_ARCHIVED: latest.archived if latest else None,
+    }
 
 
 def _to_kwh(value: Any) -> float | None:

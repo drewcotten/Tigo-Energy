@@ -7,7 +7,7 @@ from typing import Final
 from homeassistant.const import Platform
 
 DOMAIN: Final = "tigo_energy"
-PLATFORMS: Final[list[Platform]] = [Platform.SENSOR]
+PLATFORMS: Final[list[Platform]] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 MANUFACTURER: Final = "Tigo Energy"
 
@@ -86,3 +86,9 @@ ATTR_SYSTEM_DATA_IS_STALE: Final = "system_data_is_stale"
 ATTR_MODULE_DATA_TIMESTAMP: Final = "module_data_timestamp"
 ATTR_MODULE_DATA_AGE_SECONDS: Final = "module_data_age_seconds"
 ATTR_MODULE_DATA_IS_STALE: Final = "module_data_is_stale"
+ATTR_ALERTS_SUPPORTED: Final = "alerts_supported"
+ATTR_LATEST_ALERT_ID: Final = "latest_alert_id"
+ATTR_LATEST_ALERT_UNIQUE_ID: Final = "latest_alert_unique_id"
+ATTR_LATEST_ALERT_MESSAGE: Final = "latest_alert_message"
+ATTR_LATEST_ALERT_DESCRIPTION_HTML: Final = "latest_alert_description_html"
+ATTR_LATEST_ALERT_ARCHIVED: Final = "latest_alert_archived"
