@@ -2,8 +2,5 @@
   "name": "Tigo Energy",
   "render_readme": true,
   "hide_default_branch": true,
-  "domains": [
-    "tigo_energy"
-  ],
   "homeassistant": "2026.2.0"
 }
