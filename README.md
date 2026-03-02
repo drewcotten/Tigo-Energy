@@ -15,6 +15,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 - [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
 - [Read-Only Alerts Live Probe (2026-03-01)](docs/tigo-readonly-alerts-live-probe-2026-03-01.md)
 - [Entity Name Reference (Example IDs)](docs/entity-name-reference.md)
+- [Persistent Notifications Reference](docs/persistent-notifications-reference.md)
 
 ## Features
 
@@ -187,6 +188,7 @@ System entities/devices are created per configured system subentry, including ca
 
 When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`) and are associated to array devices derived from `/system/layout`. If a semantic label is not present, the integration falls back to module ID-style naming.
 For multi-system accounts, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
+Panel entities are created from Tigo topology/inventory labels and remain present regardless of time of day; when no recent telemetry point exists (for example overnight), panel sensor values show as unknown until new points arrive.
 
 ### Additional system diagnostics (when module telemetry is enabled)
 

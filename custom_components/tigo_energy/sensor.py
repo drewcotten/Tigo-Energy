@@ -76,6 +76,7 @@ from .models import (
 )
 
 OBJECT_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+PANEL_LABEL_PATTERN = re.compile(r"^[A-Za-z]+[0-9]+$")
 
 SYSTEM_METRICS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -398,7 +399,7 @@ class TigoEntityManager:
 
         if module_data is not None:
             entities.extend(self._new_array_entities(summary_data))
-            entities.extend(self._new_module_entities(module_data))
+            entities.extend(self._new_module_entities(summary_data, module_data))
             entities.extend(self._new_rssi_aggregate_entities(system_ids))
 
         return entities
@@ -415,6 +416,8 @@ class TigoEntityManager:
         new_entities.extend(self._new_source_entities(data))
         if self._runtime.module_coordinator is not None:
             new_entities.extend(self._new_array_entities(data))
+            module_data = self._runtime.module_coordinator.data
+            new_entities.extend(self._new_module_entities(data, module_data))
             new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
             self._async_add_entities(new_entities)
@@ -428,7 +431,7 @@ class TigoEntityManager:
         system_ids = self._candidate_system_ids(self._runtime.summary_coordinator.data, module_data)
         new_entities = self._new_system_entities(system_ids)
         new_entities.extend(self._new_array_entities(self._runtime.summary_coordinator.data))
-        new_entities.extend(self._new_module_entities(module_data))
+        new_entities.extend(self._new_module_entities(self._runtime.summary_coordinator.data, module_data))
         new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
             self._async_add_entities(new_entities)
@@ -472,13 +475,28 @@ class TigoEntityManager:
                     )
         return new_entities
 
-    def _new_module_entities(self, data: ModuleSnapshot) -> list[SensorEntity]:
+    def _new_module_entities(
+        self,
+        summary_data: SummarySnapshot,
+        module_data: ModuleSnapshot | None,
+    ) -> list[SensorEntity]:
         new_entities: list[SensorEntity] = []
-        for system_id, modules in data.by_system.items():
-            for module_id, metrics in modules.items():
+        known_modules_by_system: dict[int, set[str]] = {}
+
+        # Primary source: topology/inventory labels from summary layout/full/object mapping.
+        for system_id, system in summary_data.systems.items():
+            inventory_labels = set(_system_panel_labels(system))
+            if inventory_labels:
+                known_modules_by_system.setdefault(system_id, set()).update(inventory_labels)
+
+        # Fallback source: any module IDs already seen in telemetry snapshots.
+        if module_data is not None:
+            for system_id, modules in module_data.by_system.items():
+                known_modules_by_system.setdefault(system_id, set()).update(modules)
+
+        for system_id, module_ids in known_modules_by_system.items():
+            for module_id in sorted(module_ids, key=_panel_sort_key):
                 for metric in METRICS:
-                    if metric not in metrics:
-                        continue
                     key = (system_id, module_id, metric)
                     if key in self._known_module_metric_keys:
                         continue
@@ -1018,10 +1036,7 @@ class TigoModuleSensor(TigoBaseEntity):
     def available(self) -> bool:
         if self._runtime.module_coordinator is None:
             return False
-        if not super().available:
-            return False
-
-        return self._point is not None
+        return super().available
 
     @property
     def native_value(self) -> Any:
@@ -1211,6 +1226,34 @@ def _array_for_module(system: SystemSnapshot | None, module_id: str) -> ArraySna
     if array_id is None:
         return None
     return system.arrays.get(array_id)
+
+
+def _system_panel_labels(system: SystemSnapshot | None) -> tuple[str, ...]:
+    """Return known panel labels for one system from topology and mappings."""
+    if system is None:
+        return ()
+
+    labels: set[str] = set()
+    for array in system.arrays.values():
+        labels.update(array.panel_labels)
+
+    for label in system.module_label_map.values():
+        if label and PANEL_LABEL_PATTERN.match(label):
+            labels.add(label)
+
+    for module_id in system.module_array_map:
+        if PANEL_LABEL_PATTERN.match(module_id):
+            labels.add(module_id)
+
+    return tuple(sorted(labels, key=_panel_sort_key))
+
+
+def _panel_sort_key(label: str) -> tuple[str, int, str]:
+    """Sort panel labels naturally (A1, A2, A10) while handling unknown formats."""
+    match = re.match(r"^([A-Za-z]+)(\d+)$", label)
+    if match:
+        return (match.group(1).upper(), int(match.group(2)), label.upper())
+    return (label.upper(), 0, label.upper())
 
 
 def _reporting_module_labels(

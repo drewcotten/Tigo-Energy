@@ -902,3 +902,108 @@ async def test_module_discovery_still_creates_system_entities(hass):
     entities = manager.collect_initial_entities()
 
     assert any(isinstance(entity, TigoSystemSensor) for entity in entities)
+
+
+async def test_module_entities_created_from_summary_inventory_without_points(hass):
+    """Panel entities should be created from summary topology even with no telemetry points."""
+    now = datetime.now(UTC)
+
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={
+            1001: SystemSnapshot(
+                system_id=1001,
+                name="Site One",
+                timezone="UTC",
+                address=None,
+                latitude=None,
+                longitude=None,
+                turn_on_date="2025-08-24",
+                power_rating=5000.0,
+                summary={"last_power_dc": 0},
+                sources=[],
+                freshest_timestamp=now,
+                system_data_age_seconds=60.0,
+                system_data_is_stale=False,
+                latest_source_checkin=now,
+                latest_non_empty_telemetry_timestamp=None,
+                heartbeat_age_seconds=60.0,
+                telemetry_lag_seconds=None,
+                telemetry_lag_status="unknown",
+                alert_state=_default_alert_state(),
+                module_label_map={"89287797": "A1", "89287798": "A2"},
+                arrays={
+                    "string_1": ArraySnapshot(
+                        array_id="string_1",
+                        name="Array A",
+                        short_label="A",
+                        string_id=1,
+                        mppt_label="MPPT 1",
+                        inverter_label="Inverter 1",
+                        panel_labels=("A1", "A2"),
+                    )
+                },
+                module_array_map={"A1": "string_1", "A2": "string_1"},
+            )
+        },
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=60.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={},
+        by_system={},
+        freshness=FreshnessState(
+            latest_stable_timestamp=None,
+            fetched_at=now,
+            lag_seconds=None,
+            is_stale=True,
+        ),
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-1")
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+
+    manager = TigoEntityManager(
+        entry=entry,
+        runtime=runtime,
+        async_add_entities=Mock(),
+    )
+    entities = manager.collect_initial_entities()
+    module_entities = [entity for entity in entities if isinstance(entity, TigoModuleSensor)]
+
+    assert len(module_entities) == 8
+    pin_a1 = next(
+        entity for entity in module_entities if entity._module_id == "A1" and entity._metric == "Pin"
+    )
+    assert pin_a1.available is True
+    assert pin_a1.native_value is None
