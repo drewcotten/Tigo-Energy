@@ -224,6 +224,7 @@ async def test_summary_coordinator_alert_state_computation(hass):
         {"totalCount": 2},
     )
     mock_client.async_get_objects_system.return_value = [{"id": 123, "label": "A1"}]
+    mock_client.async_get_system_layout.return_value = {}
 
     coordinator = TigoSummaryCoordinator(
         hass=hass,
@@ -299,10 +300,15 @@ async def test_summary_coordinator_uses_layout_fallback_for_module_labels(hass):
     mock_client.async_get_system_layout.return_value = {
         "inverters": [
             {
+                "label": "Inverter 1",
                 "mppts": [
                     {
+                        "label": "MPPT 1",
                         "strings": [
                             {
+                                "string_id": 57810,
+                                "label": "String A",
+                                "short_label": "A",
                                 "panels": [
                                     {"object_id": 89287797, "panel_id": 650288, "label": "A1"}
                                 ]
@@ -324,6 +330,11 @@ async def test_summary_coordinator_uses_layout_fallback_for_module_labels(hass):
     await coordinator.async_refresh()
 
     assert coordinator.data.systems[1001].module_label_map.get("89287797") == "A1"
+    arrays = coordinator.data.systems[1001].arrays
+    assert "string_57810" in arrays
+    assert arrays["string_57810"].name == "Array A"
+    assert arrays["string_57810"].panel_labels == ("A1",)
+    assert coordinator.data.systems[1001].module_array_map.get("A1") == "string_57810"
 
 
 async def test_module_coordinator_dedupes_older_points(hass):

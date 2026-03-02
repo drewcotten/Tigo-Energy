@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.tigo_energy.const import DOMAIN
 from custom_components.tigo_energy.models import (
     AlertRecord,
+    ArraySnapshot,
     FreshnessState,
     ModulePoint,
     ModuleSnapshot,
@@ -22,7 +23,10 @@ from custom_components.tigo_energy.models import (
 )
 from custom_components.tigo_energy.sensor import (
     ALERT_METRICS,
+    ARRAY_METRICS,
+    SOURCE_METRICS,
     SYSTEM_METRICS,
+    TigoArraySensor,
     TigoEntityManager,
     TigoModuleSensor,
     TigoSystemSensor,
@@ -33,6 +37,10 @@ _LOGGER = logging.getLogger(__name__)
 
 def _metric(key: str):
     return next(description for description in (*SYSTEM_METRICS, *ALERT_METRICS) if description.key == key)
+
+
+def _array_metric(key: str):
+    return next(description for description in ARRAY_METRICS if description.key == key)
 
 
 def _default_alert_state() -> SystemAlertState:
@@ -363,6 +371,14 @@ async def test_system_status_and_metadata_sensors(hass):
     assert monitored_sensor.native_value is True
 
 
+def test_sensor_descriptions_use_ha_sensor_entity_description() -> None:
+    """All sensor description sets should use HA SensorEntityDescription."""
+    for description in (*SYSTEM_METRICS, *ALERT_METRICS, *SOURCE_METRICS, *ARRAY_METRICS):
+        assert type(description).__name__ == "SensorEntityDescription"
+        assert hasattr(description, "native_unit_of_measurement")
+        assert hasattr(description, "suggested_unit_of_measurement")
+
+
 async def test_system_sensor_stays_available_when_stale(hass):
     """System sensor remains available; stale is represented via attributes."""
     now = datetime.now(UTC)
@@ -565,6 +581,18 @@ async def test_module_sensor_uses_system_scoped_panel_naming(hass):
                 telemetry_lag_status="ok",
                 alert_state=_default_alert_state(),
                 module_label_map={"89287797": "A1"},
+                arrays={
+                    "string_1": ArraySnapshot(
+                        array_id="string_1",
+                        name="Array A",
+                        short_label="A",
+                        string_id=1,
+                        mppt_label="MPPT 1",
+                        inverter_label="Inverter 1",
+                        panel_labels=("A1",),
+                    )
+                },
+                module_array_map={"A1": "string_1"},
             )
         },
         freshness=FreshnessState(
@@ -631,7 +659,159 @@ async def test_module_sensor_uses_system_scoped_panel_naming(hass):
     )
 
     assert sensor.device_info["name"] == "Site One Panel A1"
+    assert sensor.device_info["via_device"] == (DOMAIN, "array_1001_string_1")
     assert sensor._attr_suggested_object_id == "system_1001_panel_a1_pin"
+
+
+async def test_array_sensor_computes_derived_metrics(hass):
+    """Array sensors should derive metrics from panel telemetry points."""
+    now = datetime.now(UTC)
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={
+            1001: SystemSnapshot(
+                system_id=1001,
+                name="Site One",
+                timezone="UTC",
+                address=None,
+                latitude=None,
+                longitude=None,
+                turn_on_date="2025-08-24",
+                power_rating=5000.0,
+                summary={"last_power_dc": 1200},
+                sources=[],
+                freshest_timestamp=now,
+                system_data_age_seconds=60.0,
+                system_data_is_stale=False,
+                latest_source_checkin=now,
+                latest_non_empty_telemetry_timestamp=now,
+                heartbeat_age_seconds=60.0,
+                telemetry_lag_seconds=60.0,
+                telemetry_lag_status="ok",
+                alert_state=_default_alert_state(),
+                module_label_map={},
+                arrays={
+                    "string_57810": ArraySnapshot(
+                        array_id="string_57810",
+                        name="Array A",
+                        short_label="A",
+                        string_id=57810,
+                        mppt_label="MPPT 1",
+                        inverter_label="Inverter 1",
+                        panel_labels=("A1", "A2"),
+                    )
+                },
+                module_array_map={"A1": "string_57810", "A2": "string_57810"},
+            )
+        },
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=60.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={
+            (1001, "A1", "Pin"): ModulePoint(1001, "A1", "Pin", 120.0, now),
+            (1001, "A2", "Pin"): ModulePoint(1001, "A2", "Pin", 130.0, now),
+            (1001, "A1", "Vin"): ModulePoint(1001, "A1", "Vin", 39.5, now),
+            (1001, "A2", "Vin"): ModulePoint(1001, "A2", "Vin", 40.5, now),
+            (1001, "A1", "Iin"): ModulePoint(1001, "A1", "Iin", 6.2, now),
+            (1001, "A2", "Iin"): ModulePoint(1001, "A2", "Iin", 6.0, now),
+            (1001, "A1", "RSSI"): ModulePoint(1001, "A1", "RSSI", 78.0, now),
+            (1001, "A2", "RSSI"): ModulePoint(1001, "A2", "RSSI", 121.0, now),
+        },
+        by_system={
+            1001: {
+                "A1": {
+                    "Pin": ModulePoint(1001, "A1", "Pin", 120.0, now),
+                    "Vin": ModulePoint(1001, "A1", "Vin", 39.5, now),
+                    "Iin": ModulePoint(1001, "A1", "Iin", 6.2, now),
+                    "RSSI": ModulePoint(1001, "A1", "RSSI", 78.0, now),
+                },
+                "A2": {
+                    "Pin": ModulePoint(1001, "A2", "Pin", 130.0, now),
+                    "Vin": ModulePoint(1001, "A2", "Vin", 40.5, now),
+                    "Iin": ModulePoint(1001, "A2", "Iin", 6.0, now),
+                    "RSSI": ModulePoint(1001, "A2", "RSSI", 121.0, now),
+                },
+            }
+        },
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-array")
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+
+    power_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_power"),
+    )
+    coverage_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_reporting_coverage"),
+    )
+    worst_rssi_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_rssi_worst"),
+    )
+    low_rssi_count_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_rssi_low_count"),
+    )
+
+    assert power_sensor.native_value == 250.0
+    assert coverage_sensor.native_value == 100.0
+    assert worst_rssi_sensor.native_value == 78.0
+    assert low_rssi_count_sensor.native_value == 1
+    assert power_sensor.device_info["name"] == "Site One Array A"
+    attrs = coverage_sensor.extra_state_attributes
+    assert attrs["array_module_count"] == 2
+    assert attrs["array_reporting_module_count"] == 2
 
 
 async def test_module_discovery_still_creates_system_entities(hass):

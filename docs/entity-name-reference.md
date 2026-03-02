@@ -4,6 +4,7 @@ This reference shows what users see in Home Assistant vs the generated `sensor.x
 
 - Example system display name: `System_Name`
 - Example source display name: `Primary CCA`
+- Example array display name: `Array A`
 - Example panel labels: `A1`, `A2`, `A3` (sample subset)
 
 ## Naming Rules
@@ -14,6 +15,9 @@ This reference shows what users see in Home Assistant vs the generated `sensor.x
 
 Panel entity ID pattern:
 - `sensor.system_<system_id>_panel_<panel_label>_<metric>`
+
+Array entity ID pattern:
+- `sensor.system_<system_id>_array_<array_id>_<metric>`
 
 Examples:
 - Display name: `System_Name Panel A2 Input power`
@@ -74,6 +78,25 @@ Collision note:
 - Input voltage -> `sensor.system_<system_id>_panel_a3_vin`
 - Input current -> `sensor.system_<system_id>_panel_a3_iin`
 - RSSI -> `sensor.system_<system_id>_panel_a3_rssi`
+
+## Array Sensors (sample)
+
+### `System_Name Array A`
+
+- Array power -> `sensor.system_<system_id>_array_string_57810_array_power`
+- Array average voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage_average`
+- Array minimum voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage_min`
+- Array maximum voltage -> `sensor.system_<system_id>_array_string_57810_array_voltage_max`
+- Array average current -> `sensor.system_<system_id>_array_string_57810_array_current_average`
+- Array minimum current -> `sensor.system_<system_id>_array_string_57810_array_current_min`
+- Array maximum current -> `sensor.system_<system_id>_array_string_57810_array_current_max`
+- Array average RSSI -> `sensor.system_<system_id>_array_string_57810_array_rssi_average`
+- Array worst RSSI -> `sensor.system_<system_id>_array_string_57810_array_rssi_worst`
+- Array low RSSI count -> `sensor.system_<system_id>_array_string_57810_array_rssi_low_count`
+- Array watch RSSI count -> `sensor.system_<system_id>_array_string_57810_array_rssi_watch_count`
+- Array module count -> `sensor.system_<system_id>_array_string_57810_array_module_count`
+- Array reporting module count -> `sensor.system_<system_id>_array_string_57810_array_reporting_module_count`
+- Array reporting coverage -> `sensor.system_<system_id>_array_string_57810_array_reporting_coverage`
 
 ## RSSI Aggregate Sensors (module telemetry enabled)
 

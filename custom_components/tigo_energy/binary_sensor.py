@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -25,22 +24,12 @@ from .const import (
 from .models import SummarySnapshot, SystemSnapshot, TigoRuntimeData
 from .sensor import _alert_attributes, _system_sw_version
 
-
-@dataclass(frozen=True, slots=True)
-class AlertBinaryDescription:
-    """Description of one alert-related binary sensor."""
-
-    key: str
-    translation_key: str
-    entity_category: EntityCategory | None = None
-
-
-ALERT_BINARY_SENSORS: tuple[AlertBinaryDescription, ...] = (
-    AlertBinaryDescription(
+ALERT_BINARY_SENSORS: tuple[BinarySensorEntityDescription, ...] = (
+    BinarySensorEntityDescription(
         key="pv_off_active",
         translation_key="pv_off_active",
     ),
-    AlertBinaryDescription(
+    BinarySensorEntityDescription(
         key="string_shutdown_active",
         translation_key="string_shutdown_active",
     ),
@@ -140,7 +129,7 @@ class TigoAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
         entry: ConfigEntry,
         runtime: TigoRuntimeData,
         system_id: int,
-        description: AlertBinaryDescription,
+        description: BinarySensorEntityDescription,
     ) -> None:
         super().__init__(runtime.summary_coordinator)
         self._entry = entry

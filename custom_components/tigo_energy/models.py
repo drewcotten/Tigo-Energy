@@ -88,6 +88,19 @@ class SystemAlertState:
 
 
 @dataclass(slots=True)
+class ArraySnapshot:
+    """One array/string grouping within a system."""
+
+    array_id: str
+    name: str
+    short_label: str | None
+    string_id: int | None
+    mppt_label: str | None
+    inverter_label: str | None
+    panel_labels: tuple[str, ...]
+
+
+@dataclass(slots=True)
 class SystemSnapshot:
     """System metadata + summary + source state."""
 
@@ -114,6 +127,8 @@ class SystemSnapshot:
     recent_alert_count: int | None = None
     has_monitored_modules: bool | None = None
     module_label_map: dict[str, str] = field(default_factory=dict)
+    arrays: dict[str, ArraySnapshot] = field(default_factory=dict)
+    module_array_map: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

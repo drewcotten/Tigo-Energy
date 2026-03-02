@@ -50,6 +50,7 @@ from .const import (
 )
 from .models import (
     AlertRecord,
+    ArraySnapshot,
     FreshnessState,
     ModulePoint,
     ModuleSnapshot,
@@ -72,6 +73,7 @@ SHUTDOWN_PATTERN = re.compile(
     r"\bstring shutdown\b|\bsystem shutdown\b|\bshutdown\b",
     flags=re.IGNORECASE,
 )
+ARRAY_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
@@ -238,20 +240,30 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                     err,
                 )
 
+            layout_raw: dict[str, Any] = {}
+            try:
+                layout_raw = await self._client.async_get_system_layout(system_id)
+            except TigoApiError as err:
+                LOGGER.debug(
+                    "Unable to load system layout for system %s; array grouping may be unavailable: %s",
+                    system_id,
+                    err,
+                )
+
             combined = systems_from_api.get(system_id, {})
             system_timezone = _as_optional_str(details.get("timezone") or combined.get("timezone"))
-            module_label_map = _build_module_label_map(objects_raw)
-            if not module_label_map:
-                try:
-                    layout_raw = await self._client.async_get_system_layout(system_id)
-                except TigoApiError as err:
-                    LOGGER.debug(
-                        "Unable to load system layout for system %s; module labels may remain raw: %s",
-                        system_id,
-                        err,
-                    )
-                else:
-                    module_label_map = _build_module_label_map_from_layout(layout_raw)
+            object_module_label_map = _build_module_label_map(objects_raw)
+            (
+                layout_module_label_map,
+                arrays,
+                module_array_map,
+            ) = _build_layout_mappings(layout_raw)
+            module_label_map = dict(layout_module_label_map)
+            module_label_map.update(object_module_label_map)
+            for raw_module_id, semantic_label in module_label_map.items():
+                array_id = module_array_map.get(raw_module_id)
+                if array_id:
+                    module_array_map[semantic_label] = array_id
             alert_records = [_build_alert_record(alert) for alert in alerts_raw]
             alert_state = _build_alert_state(
                 alerts=alert_records,
@@ -363,6 +375,8 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                     details.get("has_monitored_modules") if "has_monitored_modules" in details else combined.get("has_monitored_modules")
                 ),
                 module_label_map=module_label_map,
+                arrays=arrays,
+                module_array_map=module_array_map,
             )
 
             systems[system_id] = system_snapshot
@@ -828,30 +842,134 @@ def _build_module_label_map(objects_raw: list[dict[str, Any]]) -> dict[str, str]
 
 def _build_module_label_map_from_layout(layout_raw: dict[str, Any]) -> dict[str, str]:
     """Build module label map from /system/layout nested panel structure."""
-    label_map: dict[str, str] = {}
+    label_map, _, _ = _build_layout_mappings(layout_raw)
+    return label_map
+
+
+def _build_layout_mappings(
+    layout_raw: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, ArraySnapshot], dict[str, str]]:
+    """Extract module labels, arrays, and module->array mapping from /system/layout."""
+    module_label_map: dict[str, str] = {}
+    arrays: dict[str, ArraySnapshot] = {}
+    module_array_map: dict[str, str] = {}
 
     for inverter in layout_raw.get("inverters", []):
         if not isinstance(inverter, dict):
             continue
+        inverter_label = _as_optional_str(inverter.get("label"))
         for mppt in inverter.get("mppts", []):
             if not isinstance(mppt, dict):
                 continue
+            mppt_label = _as_optional_str(mppt.get("label"))
             for string_data in mppt.get("strings", []):
                 if not isinstance(string_data, dict):
                     continue
+
+                base_array_id = _array_id_from_string(string_data)
+                array_id = _unique_array_id(base_array_id, arrays)
+                short_label = _as_optional_str(string_data.get("short_label"))
+                string_id = _as_optional_int(string_data.get("string_id"))
+                array_name = _array_name_from_string(
+                    label=_as_optional_str(string_data.get("label")),
+                    short_label=short_label,
+                    string_id=string_id,
+                )
+
+                panel_labels: list[str] = []
                 for panel in string_data.get("panels", []):
                     if not isinstance(panel, dict):
                         continue
                     label = _as_optional_str(panel.get("label"))
                     if not label or not LABEL_PATTERN.match(label):
                         continue
+                    panel_labels.append(label)
+                    module_array_map[label] = array_id
                     for key in ("object_id", "panel_id"):
                         raw_id = panel.get(key)
                         if raw_id in (None, ""):
                             continue
-                        label_map[str(raw_id)] = label
+                        raw_text = str(raw_id)
+                        module_label_map[raw_text] = label
+                        module_array_map[raw_text] = array_id
 
-    return label_map
+                arrays[array_id] = ArraySnapshot(
+                    array_id=array_id,
+                    name=array_name,
+                    short_label=short_label,
+                    string_id=string_id,
+                    mppt_label=mppt_label,
+                    inverter_label=inverter_label,
+                    panel_labels=tuple(sorted(set(panel_labels))),
+                )
+
+    return module_label_map, arrays, module_array_map
+
+
+def _array_id_from_string(string_data: dict[str, Any]) -> str:
+    """Return stable array identifier token from a layout string node."""
+    string_id = _as_optional_int(string_data.get("string_id"))
+    if string_id is not None:
+        return f"string_{string_id}"
+
+    object_id = _as_optional_int(string_data.get("object_id"))
+    if object_id is not None:
+        return f"object_{object_id}"
+
+    short_label = _as_optional_str(string_data.get("short_label"))
+    if short_label:
+        token = _array_token(short_label)
+        if token:
+            return f"label_{token}"
+
+    label = _as_optional_str(string_data.get("label"))
+    if label:
+        token = _array_token(label)
+        if token:
+            return f"label_{token}"
+
+    return "array_unknown"
+
+
+def _array_name_from_string(
+    *,
+    label: str | None,
+    short_label: str | None,
+    string_id: int | None,
+) -> str:
+    """Return user-facing array name from layout string labels."""
+    if short_label:
+        return f"Array {short_label}"
+
+    if label:
+        trimmed = label.strip()
+        lower = trimmed.lower()
+        if lower.startswith("string "):
+            suffix = trimmed[7:].strip()
+            if suffix:
+                return f"Array {suffix}"
+        return f"Array {trimmed}"
+
+    if string_id is not None:
+        return f"Array {string_id}"
+
+    return "Array"
+
+
+def _array_token(value: str) -> str:
+    """Return lowercase token used in array identifiers."""
+    return ARRAY_TOKEN_PATTERN.sub("_", value.strip().lower()).strip("_")
+
+
+def _unique_array_id(base: str, arrays: Mapping[str, ArraySnapshot]) -> str:
+    """Return a unique array identifier token for one system snapshot."""
+    if base not in arrays:
+        return base
+
+    idx = 2
+    while f"{base}_{idx}" in arrays:
+        idx += 1
+    return f"{base}_{idx}"
 
 
 def _build_alert_record(alert: dict[str, Any]) -> AlertRecord:

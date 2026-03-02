@@ -121,6 +121,19 @@ async def async_get_config_entry_diagnostics(
                         ),
                     },
                     "module_label_map_count": len(system.module_label_map),
+                    "array_count": len(system.arrays),
+                    "module_array_map_count": len(system.module_array_map),
+                    "arrays": {
+                        array_id: {
+                            "name": array.name,
+                            "short_label": array.short_label,
+                            "string_id": array.string_id,
+                            "mppt_label": array.mppt_label,
+                            "inverter_label": array.inverter_label,
+                            "panel_count": len(array.panel_labels),
+                        }
+                        for array_id, array in system.arrays.items()
+                    },
                 }
                 for system_id, system in summary_data.systems.items()
             },

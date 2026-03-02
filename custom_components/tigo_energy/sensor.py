@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    PERCENTAGE,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfPower,
@@ -53,6 +58,7 @@ from .const import (
 )
 from .coordinator import METRICS
 from .models import (
+    ArraySnapshot,
     ModulePoint,
     ModuleSnapshot,
     SourceSnapshot,
@@ -64,125 +70,90 @@ from .models import (
 
 OBJECT_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 
-
-@dataclass(frozen=True, slots=True)
-class SystemMetricDescription:
-    """Description of one system-level metric sensor."""
-
-    key: str
-    translation_key: str
-    device_class: SensorDeviceClass | None = None
-    unit: str | None = None
-    state_class: SensorStateClass | None = None
-    entity_category: EntityCategory | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SourceMetricDescription:
-    """Description of one source-level metric sensor."""
-
-    key: str
-    translation_key: str
-    device_class: SensorDeviceClass | None = None
-    unit: str | None = None
-    entity_category: EntityCategory | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class RssiAggregateMetricDescription:
-    """Description of one RSSI aggregate sensor."""
-
-    key: str
-    translation_key: str
-    unit: str | None = None
-    state_class: SensorStateClass | None = None
-    entity_category: EntityCategory | None = None
-
-
-SYSTEM_METRICS: tuple[SystemMetricDescription, ...] = (
-    SystemMetricDescription(
+SYSTEM_METRICS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
         key="last_power_dc",
         translation_key="current_power",
         device_class=SensorDeviceClass.POWER,
-        unit=UnitOfPower.WATT,
+        native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="daily_energy_dc",
         translation_key="daily_energy",
         device_class=SensorDeviceClass.ENERGY,
-        unit="kWh",
+        native_unit_of_measurement="kWh",
         state_class=SensorStateClass.TOTAL,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="ytd_energy_dc",
         translation_key="ytd_energy",
         device_class=SensorDeviceClass.ENERGY,
-        unit="kWh",
+        native_unit_of_measurement="kWh",
         state_class=SensorStateClass.TOTAL,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="lifetime_energy_dc",
         translation_key="lifetime_energy",
         device_class=SensorDeviceClass.ENERGY,
-        unit="kWh",
+        native_unit_of_measurement="kWh",
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="freshness_timestamp",
         translation_key="latest_stable_data_timestamp",
         device_class=SensorDeviceClass.TIMESTAMP,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="telemetry_lag_minutes",
         translation_key="telemetry_lag_minutes",
-        unit=UnitOfTime.MINUTES,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="heartbeat_age_minutes",
         translation_key="heartbeat_age_minutes",
-        unit=UnitOfTime.MINUTES,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
-ALERT_METRICS: tuple[SystemMetricDescription, ...] = (
-    SystemMetricDescription(
+ALERT_METRICS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
         key="system_status",
         translation_key="system_status",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="recent_alert_count",
         translation_key="recent_alert_count",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="has_monitored_modules",
         translation_key="has_monitored_modules",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="active_alert_count",
         translation_key="active_alert_count",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="latest_alert_title",
         translation_key="latest_alert_title",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="latest_alert_code",
         translation_key="latest_alert_code",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SystemMetricDescription(
+    SensorEntityDescription(
         key="latest_alert_time",
         translation_key="latest_alert_time",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -190,50 +161,148 @@ ALERT_METRICS: tuple[SystemMetricDescription, ...] = (
     ),
 )
 
-RSSI_AGGREGATE_METRICS: tuple[RssiAggregateMetricDescription, ...] = (
-    RssiAggregateMetricDescription(
+RSSI_AGGREGATE_METRICS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
         key="low_rssi_module_count",
         translation_key="low_rssi_module_count",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    RssiAggregateMetricDescription(
+    SensorEntityDescription(
         key="watch_rssi_module_count",
         translation_key="watch_rssi_module_count",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    RssiAggregateMetricDescription(
+    SensorEntityDescription(
         key="worst_rssi",
         translation_key="worst_module_rssi",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
-SOURCE_METRICS: tuple[SourceMetricDescription, ...] = (
-    SourceMetricDescription(
+SOURCE_METRICS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
         key="last_checkin",
         translation_key="source_last_checkin",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SourceMetricDescription(
+    SensorEntityDescription(
         key="control_state",
         translation_key="source_control_state",
     ),
-    SourceMetricDescription(
+    SensorEntityDescription(
         key="sw_version",
         translation_key="source_sw_version",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SourceMetricDescription(
+    SensorEntityDescription(
         key="gateway_count",
         translation_key="source_gateway_count",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    SourceMetricDescription(
+    SensorEntityDescription(
         key="serial",
         translation_key="source_serial",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+ARRAY_METRICS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="array_power",
+        translation_key="array_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="array_voltage_average",
+        translation_key="array_voltage_average",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="array_voltage_min",
+        translation_key="array_voltage_min",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_voltage_max",
+        translation_key="array_voltage_max",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_current_average",
+        translation_key="array_current_average",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="array_current_min",
+        translation_key="array_current_min",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_current_max",
+        translation_key="array_current_max",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_rssi_average",
+        translation_key="array_rssi_average",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_rssi_worst",
+        translation_key="array_rssi_worst",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_rssi_low_count",
+        translation_key="array_rssi_low_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_rssi_watch_count",
+        translation_key="array_rssi_watch_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_module_count",
+        translation_key="array_module_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_reporting_module_count",
+        translation_key="array_reporting_module_count",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_reporting_coverage",
+        translation_key="array_reporting_coverage",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
@@ -308,6 +377,7 @@ class TigoEntityManager:
         self._known_source_metric_keys: set[tuple[int, str, str]] = set()
         self._known_module_metric_keys: set[tuple[int, str, str]] = set()
         self._known_rssi_aggregate_keys: set[tuple[int, str]] = set()
+        self._known_array_metric_keys: set[tuple[int, str, str]] = set()
 
     def collect_initial_entities(self) -> list[SensorEntity]:
         """Collect initial entities from current coordinator data."""
@@ -320,6 +390,7 @@ class TigoEntityManager:
         entities.extend(self._new_source_entities(summary_data))
 
         if module_data is not None:
+            entities.extend(self._new_array_entities(summary_data))
             entities.extend(self._new_module_entities(module_data))
             entities.extend(self._new_rssi_aggregate_entities(system_ids))
 
@@ -336,6 +407,7 @@ class TigoEntityManager:
         new_entities.extend(self._new_system_entities(system_ids))
         new_entities.extend(self._new_source_entities(data))
         if self._runtime.module_coordinator is not None:
+            new_entities.extend(self._new_array_entities(data))
             new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
             self._async_add_entities(new_entities)
@@ -348,6 +420,7 @@ class TigoEntityManager:
         module_data = self._runtime.module_coordinator.data
         system_ids = self._candidate_system_ids(self._runtime.summary_coordinator.data, module_data)
         new_entities = self._new_system_entities(system_ids)
+        new_entities.extend(self._new_array_entities(self._runtime.summary_coordinator.data))
         new_entities.extend(self._new_module_entities(module_data))
         new_entities.extend(self._new_rssi_aggregate_entities(system_ids))
         if new_entities:
@@ -410,6 +483,30 @@ class TigoEntityManager:
                             system_id=system_id,
                             module_id=module_id,
                             metric=metric,
+                        )
+                    )
+        return new_entities
+
+    def _new_array_entities(self, data: SummarySnapshot) -> list[SensorEntity]:
+        """Create per-array aggregate entities for systems."""
+        if self._runtime.module_coordinator is None:
+            return []
+
+        new_entities: list[SensorEntity] = []
+        for system in data.systems.values():
+            for array_id in sorted(system.arrays):
+                for description in ARRAY_METRICS:
+                    key = (system.system_id, array_id, description.key)
+                    if key in self._known_array_metric_keys:
+                        continue
+                    self._known_array_metric_keys.add(key)
+                    new_entities.append(
+                        TigoArraySensor(
+                            entry=self._entry,
+                            runtime=self._runtime,
+                            system_id=system.system_id,
+                            array_id=array_id,
+                            description=description,
                         )
                     )
         return new_entities
@@ -509,7 +606,7 @@ class TigoBaseEntity(CoordinatorEntity, SensorEntity):
 class TigoSystemSensor(TigoBaseEntity):
     """System-level metrics and freshness sensors."""
 
-    entity_description: SystemMetricDescription
+    entity_description: SensorEntityDescription
 
     def __init__(
         self,
@@ -517,7 +614,7 @@ class TigoSystemSensor(TigoBaseEntity):
         entry: ConfigEntry,
         runtime: TigoRuntimeData,
         system_id: int,
-        description: SystemMetricDescription,
+        description: SensorEntityDescription,
     ) -> None:
         super().__init__(
             entry=entry,
@@ -529,7 +626,7 @@ class TigoSystemSensor(TigoBaseEntity):
         self._attr_unique_id = f"{entry.entry_id}_system_{system_id}_{description.key}"
         self._attr_translation_key = description.translation_key
         self._attr_device_class = description.device_class
-        self._attr_native_unit_of_measurement = description.unit
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_state_class = description.state_class
         self._attr_entity_category = description.entity_category
 
@@ -611,7 +708,7 @@ class TigoSystemSensor(TigoBaseEntity):
 class TigoSourceSensor(TigoBaseEntity):
     """Per-source health and identity sensors."""
 
-    entity_description: SourceMetricDescription
+    entity_description: SensorEntityDescription
 
     def __init__(
         self,
@@ -621,7 +718,7 @@ class TigoSourceSensor(TigoBaseEntity):
         system_id: int,
         source_id: str,
         source_name: str,
-        description: SourceMetricDescription,
+        description: SensorEntityDescription,
     ) -> None:
         super().__init__(
             entry=entry,
@@ -638,7 +735,7 @@ class TigoSourceSensor(TigoBaseEntity):
         )
         self._attr_translation_key = description.translation_key
         self._attr_device_class = description.device_class
-        self._attr_native_unit_of_measurement = description.unit
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_entity_category = description.entity_category
 
     @property
@@ -666,6 +763,181 @@ class TigoSourceSensor(TigoBaseEntity):
         if source is None:
             return None
         return getattr(source, self.entity_description.key)
+
+
+class TigoArraySensor(TigoBaseEntity):
+    """Per-array derived telemetry and diagnostics sensor."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        *,
+        entry: ConfigEntry,
+        runtime: TigoRuntimeData,
+        system_id: int,
+        array_id: str,
+        description: SensorEntityDescription,
+    ) -> None:
+        coordinator = runtime.module_coordinator
+        if coordinator is None:
+            raise RuntimeError("Module coordinator is not available")
+
+        super().__init__(
+            entry=entry,
+            runtime=runtime,
+            coordinator=coordinator,
+            system_id=system_id,
+        )
+        self._array_id = array_id
+        self.entity_description = description
+        self._attr_unique_id = f"{entry.entry_id}_array_{system_id}_{array_id}_{description.key}"
+        self._attr_translation_key = description.translation_key
+        self._attr_device_class = description.device_class
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
+        self._attr_state_class = description.state_class
+        self._attr_entity_category = description.entity_category
+        self._attr_suggested_object_id = _array_suggested_object_id(
+            system_id=system_id,
+            array_id=array_id,
+            metric=description.key,
+        )
+
+    @property
+    def available(self) -> bool:
+        if self._runtime.module_coordinator is None:
+            return False
+        if not super().available:
+            return False
+        return self._array is not None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        system_name = system.name if system else f"System {self._system_id}"
+        array = self._array
+        array_name = array.name if array else f"Array {self._array_id}"
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"array_{self._system_id}_{self._array_id}")},
+            name=f"{system_name} {array_name}",
+            manufacturer=MANUFACTURER,
+            model="Tigo Array",
+            via_device=(DOMAIN, f"system_{self._system_id}"),
+        )
+
+    @property
+    def native_value(self) -> Any:
+        array = self._array
+        if array is None:
+            return None
+
+        pin_values = self._metric_values(array, "Pin")
+        vin_values = self._metric_values(array, "Vin")
+        iin_values = self._metric_values(array, "Iin")
+        rssi_values = self._metric_values(array, "RSSI")
+        watch_threshold, alert_threshold = _rssi_thresholds_from_entry(self._entry)
+        reporting_module_count = self._reporting_module_count(array)
+        module_count = len(array.panel_labels)
+
+        key = self.entity_description.key
+        if key == "array_power":
+            return round(sum(pin_values), 1) if pin_values else None
+        if key == "array_voltage_average":
+            return _mean_or_none(vin_values, precision=2)
+        if key == "array_voltage_min":
+            return round(min(vin_values), 2) if vin_values else None
+        if key == "array_voltage_max":
+            return round(max(vin_values), 2) if vin_values else None
+        if key == "array_current_average":
+            return _mean_or_none(iin_values, precision=2)
+        if key == "array_current_min":
+            return round(min(iin_values), 2) if iin_values else None
+        if key == "array_current_max":
+            return round(max(iin_values), 2) if iin_values else None
+        if key == "array_rssi_average":
+            return _mean_or_none(rssi_values, precision=1)
+        if key == "array_rssi_worst":
+            return min(rssi_values) if rssi_values else None
+        if key == "array_rssi_low_count":
+            return sum(1 for value in rssi_values if value < alert_threshold)
+        if key == "array_rssi_watch_count":
+            return sum(1 for value in rssi_values if alert_threshold <= value < watch_threshold)
+        if key == "array_module_count":
+            return module_count
+        if key == "array_reporting_module_count":
+            return reporting_module_count
+        if key == "array_reporting_coverage":
+            if module_count == 0:
+                return None
+            return round((reporting_module_count / module_count) * 100, 1)
+
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        array = self._array
+        if array is None:
+            attrs.update(
+                {
+                    "array_id": self._array_id,
+                    "array_name": None,
+                    "array_short_label": None,
+                    "array_string_id": None,
+                    "array_panel_labels": [],
+                    "array_module_count": 0,
+                    "array_reporting_module_count": 0,
+                }
+            )
+            return attrs
+
+        reporting_count = self._reporting_module_count(array)
+        attrs.update(
+            {
+                "array_id": array.array_id,
+                "array_name": array.name,
+                "array_short_label": array.short_label,
+                "array_string_id": array.string_id,
+                "array_mppt_label": array.mppt_label,
+                "array_inverter_label": array.inverter_label,
+                "array_panel_labels": list(array.panel_labels),
+                "array_module_count": len(array.panel_labels),
+                "array_reporting_module_count": reporting_count,
+                "array_reporting_module_labels": _reporting_module_labels(
+                    runtime=self._runtime,
+                    system_id=self._system_id,
+                    panel_labels=array.panel_labels,
+                ),
+            }
+        )
+        return attrs
+
+    def _metric_values(self, array: ArraySnapshot, metric: str) -> list[float]:
+        """Return metric values for modules that belong to this array."""
+        if self._runtime.module_coordinator is None:
+            return []
+        modules = self._runtime.module_coordinator.data.by_system.get(self._system_id, {})
+        values: list[float] = []
+        for panel_label in array.panel_labels:
+            point = modules.get(panel_label, {}).get(metric)
+            if point is None:
+                continue
+            values.append(point.value)
+        return values
+
+    def _reporting_module_count(self, array: ArraySnapshot) -> int:
+        """Return count of modules with at least one telemetry metric in snapshot."""
+        if self._runtime.module_coordinator is None:
+            return 0
+        modules = self._runtime.module_coordinator.data.by_system.get(self._system_id, {})
+        return sum(1 for panel_label in array.panel_labels if modules.get(panel_label))
+
+    @property
+    def _array(self) -> ArraySnapshot | None:
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        if system is None:
+            return None
+        return system.arrays.get(self._array_id)
 
 
 class TigoModuleSensor(TigoBaseEntity):
@@ -707,12 +979,18 @@ class TigoModuleSensor(TigoBaseEntity):
     def device_info(self) -> DeviceInfo:
         system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
         system_name = system.name if system else f"System {self._system_id}"
+        array = _array_for_module(system, self._module_id)
+        via_device = (
+            (DOMAIN, f"array_{self._system_id}_{array.array_id}")
+            if array is not None
+            else (DOMAIN, f"system_{self._system_id}")
+        )
         return DeviceInfo(
             identifiers={(DOMAIN, f"module_{self._system_id}_{self._module_id}")},
             name=f"{system_name} Panel {self._module_id}",
             manufacturer=MANUFACTURER,
             model="Tigo Panel",
-            via_device=(DOMAIN, f"system_{self._system_id}"),
+            via_device=via_device,
         )
 
     @property
@@ -757,6 +1035,10 @@ class TigoModuleSensor(TigoBaseEntity):
                 ATTR_MODULE_DATA_IS_STALE: module_data_is_stale,
             }
         )
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        array = _array_for_module(system, self._module_id)
+        attrs["array_id"] = array.array_id if array else None
+        attrs["array_name"] = array.name if array else None
         if self._metric == "RSSI":
             attrs.update(
                 {
@@ -784,7 +1066,7 @@ class TigoModuleSensor(TigoBaseEntity):
 class TigoRssiAggregateSensor(TigoBaseEntity):
     """System-level aggregate sensor for RSSI health."""
 
-    entity_description: RssiAggregateMetricDescription
+    entity_description: SensorEntityDescription
 
     def __init__(
         self,
@@ -792,7 +1074,7 @@ class TigoRssiAggregateSensor(TigoBaseEntity):
         entry: ConfigEntry,
         runtime: TigoRuntimeData,
         system_id: int,
-        description: RssiAggregateMetricDescription,
+        description: SensorEntityDescription,
     ) -> None:
         coordinator = runtime.module_coordinator
         if coordinator is None:
@@ -807,7 +1089,7 @@ class TigoRssiAggregateSensor(TigoBaseEntity):
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_system_{system_id}_{description.key}"
         self._attr_translation_key = description.translation_key
-        self._attr_native_unit_of_measurement = description.unit
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_state_class = description.state_class
         self._attr_entity_category = description.entity_category
 
@@ -893,6 +1175,36 @@ def _seconds_to_minutes(value: float | None) -> float | None:
     return round(value / 60, 1)
 
 
+def _mean_or_none(values: list[float], *, precision: int) -> float | None:
+    """Return rounded mean for list or None when empty."""
+    if not values:
+        return None
+    return round(sum(values) / len(values), precision)
+
+
+def _array_for_module(system: SystemSnapshot | None, module_id: str) -> ArraySnapshot | None:
+    """Return array snapshot for a module/panel label when available."""
+    if system is None:
+        return None
+    array_id = system.module_array_map.get(module_id)
+    if array_id is None:
+        return None
+    return system.arrays.get(array_id)
+
+
+def _reporting_module_labels(
+    *,
+    runtime: TigoRuntimeData,
+    system_id: int,
+    panel_labels: tuple[str, ...],
+) -> list[str]:
+    """Return sorted panel labels that currently have module telemetry points."""
+    if runtime.module_coordinator is None:
+        return []
+    modules = runtime.module_coordinator.data.by_system.get(system_id, {})
+    return sorted(label for label in panel_labels if modules.get(label))
+
+
 def _rssi_values_for_system(runtime: TigoRuntimeData, system_id: int) -> list[float]:
     """Return latest RSSI values for all modules in one system."""
     if runtime.module_coordinator is None:
@@ -940,6 +1252,13 @@ def _module_suggested_object_id(*, system_id: int, module_id: str, metric: str) 
     panel_token = _sanitize_object_token(module_id)
     metric_token = _sanitize_object_token(metric)
     return f"system_{system_id}_panel_{panel_token}_{metric_token}"
+
+
+def _array_suggested_object_id(*, system_id: int, array_id: str, metric: str) -> str:
+    """Return deterministic object_id for derived array sensors."""
+    array_token = _sanitize_object_token(array_id)
+    metric_token = _sanitize_object_token(metric)
+    return f"system_{system_id}_array_{array_token}_{metric_token}"
 
 
 def _sanitize_object_token(value: str) -> str:

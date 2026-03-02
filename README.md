@@ -20,6 +20,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 
 - Native Home Assistant onboarding with one account entry and per-system subentries (use **Add system** to expand grouped systems under one integration).
 - Optional module telemetry from minute aggregate data: per-module input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus system-level RSSI aggregate sensors.
+- Derived array-level sensors from Tigo layout + module telemetry: array power, voltage/current aggregates, RSSI health aggregates, and reporting coverage/count metrics.
 - System and source monitoring: power/energy summary sensors plus source health sensors (check-in, control state, firmware, gateway count, serial).
 - Read-only alert and safety monitoring: alert sensors plus `PV-Off active` and `String shutdown active` binary sensors.
 - Lag-aware cloud handling: rolling backfill, short-window fallback retry, and freshness diagnostics (`telemetry_lag_status`, stale attributes).
@@ -120,7 +121,7 @@ These are the exact Home Assistant sensor names created by this integration.
 Entity footprint planning:
 
 - Module telemetry off: 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors. Add 5 sensors per additional source.
-- Module telemetry on: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`) plus 3 RSSI aggregate sensors per system.
+- Module telemetry on: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`), 3 RSSI aggregate sensors per system, and 14 array sensors per detected array/string.
 
 ### System device (`<System Name>`)
 
@@ -154,6 +155,23 @@ System entities/devices are created per configured system subentry, including ca
 - Gateway count
 - Source serial
 
+### Array device (`<System Name> Array <array_label>`, module telemetry enabled)
+
+- Array power
+- Array average voltage
+- Array minimum voltage
+- Array maximum voltage
+- Array average current
+- Array minimum current
+- Array maximum current
+- Array average RSSI
+- Array worst RSSI
+- Array low RSSI count
+- Array watch RSSI count
+- Array module count
+- Array reporting module count
+- Array reporting coverage
+
 ### Panel device (`<System Name> Panel <panel_label>`, opt-in)
 
 - Input power
@@ -161,7 +179,7 @@ System entities/devices are created per configured system subentry, including ca
 - Input current
 - RSSI
 
-When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`). If a semantic label is not present, the integration falls back to module ID-style naming.
+When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`) and are associated to array devices derived from `/system/layout`. If a semantic label is not present, the integration falls back to module ID-style naming.
 For multi-system accounts, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
 
 ### Additional system diagnostics (when module telemetry is enabled)

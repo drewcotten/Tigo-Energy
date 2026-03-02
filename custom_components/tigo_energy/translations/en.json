@@ -164,6 +164,48 @@
       "source_serial": {
         "name": "Source serial"
       },
+      "array_power": {
+        "name": "Array power"
+      },
+      "array_voltage_average": {
+        "name": "Array average voltage"
+      },
+      "array_voltage_min": {
+        "name": "Array minimum voltage"
+      },
+      "array_voltage_max": {
+        "name": "Array maximum voltage"
+      },
+      "array_current_average": {
+        "name": "Array average current"
+      },
+      "array_current_min": {
+        "name": "Array minimum current"
+      },
+      "array_current_max": {
+        "name": "Array maximum current"
+      },
+      "array_rssi_average": {
+        "name": "Array average RSSI"
+      },
+      "array_rssi_worst": {
+        "name": "Array worst RSSI"
+      },
+      "array_rssi_low_count": {
+        "name": "Array low RSSI count"
+      },
+      "array_rssi_watch_count": {
+        "name": "Array watch RSSI count"
+      },
+      "array_module_count": {
+        "name": "Array module count"
+      },
+      "array_reporting_module_count": {
+        "name": "Array reporting module count"
+      },
+      "array_reporting_coverage": {
+        "name": "Array reporting coverage"
+      },
       "module_pin": {
         "name": "Input power"
       },

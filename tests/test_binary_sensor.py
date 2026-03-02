@@ -5,13 +5,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+from homeassistant.components.binary_sensor import BinarySensorEntityDescription
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.tigo_energy.binary_sensor import (
-    AlertBinaryDescription,
-    TigoAlertBinarySensor,
-)
+from custom_components.tigo_energy.binary_sensor import TigoAlertBinarySensor
 from custom_components.tigo_energy.const import DOMAIN
 from custom_components.tigo_energy.models import (
     AlertRecord,
@@ -104,7 +102,7 @@ async def test_pv_off_binary_sensor_state_and_attributes(hass):
         entry=entry,
         runtime=runtime,
         system_id=1001,
-        description=AlertBinaryDescription(
+        description=BinarySensorEntityDescription(
             key="pv_off_active",
             translation_key="pv_off_active",
         ),
@@ -142,7 +140,7 @@ async def test_shutdown_binary_sensor_off(hass):
         entry=entry,
         runtime=runtime,
         system_id=1001,
-        description=AlertBinaryDescription(
+        description=BinarySensorEntityDescription(
             key="string_shutdown_active",
             translation_key="string_shutdown_active",
         ),
