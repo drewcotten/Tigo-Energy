@@ -78,6 +78,7 @@ MODULE_METRICS = frozenset({"pin", "vin", "iin", "rssi"})
 ALERT_TYPES_CACHE_TTL = timedelta(hours=24)
 OBJECTS_CACHE_TTL = timedelta(hours=6)
 LAYOUT_CACHE_TTL = timedelta(hours=6)
+SYSTEMS_FULL_CACHE_TTL = timedelta(hours=6)
 
 
 class TigoApiClient:
@@ -103,6 +104,7 @@ class TigoApiClient:
         self._alert_types_cache: tuple[datetime, list[dict[str, Any]]] | None = None
         self._objects_cache: dict[int, tuple[datetime, list[dict[str, Any]]]] = {}
         self._layout_cache: dict[int, tuple[datetime, dict[str, Any]]] = {}
+        self._systems_full_cache: dict[int, tuple[datetime, dict[str, Any]]] = {}
 
     @property
     def account_id(self) -> str | None:
@@ -275,15 +277,25 @@ class TigoApiClient:
             "/system/layout",
             params={"id": system_id},
         )
-        layout = data.get("systems")
-        if isinstance(layout, dict):
-            normalized = layout
-        elif isinstance(layout, list) and layout and isinstance(layout[0], dict):
-            normalized = layout[0]
-        else:
-            normalized = data
+        normalized = _normalize_system_layout_payload(data)
 
         self._layout_cache[system_id] = (now, normalized)
+        return dict(normalized)
+
+    async def async_get_system_full(self, system_id: int) -> dict[str, Any]:
+        """Get /systems/full payload with short-lived in-memory caching."""
+        now = datetime.now(UTC)
+        cached = self._systems_full_cache.get(system_id)
+        if cached and now - cached[0] < SYSTEMS_FULL_CACHE_TTL:
+            return dict(cached[1])
+
+        data = await self._async_request_json(
+            "GET",
+            "/systems/full",
+            params={"id": system_id},
+        )
+        normalized = data if isinstance(data, dict) else {}
+        self._systems_full_cache[system_id] = (now, normalized)
         return dict(normalized)
 
     async def async_get_aggregate_csv(
@@ -625,6 +637,23 @@ def _extract_login_fields(
             expires_at = parse_tigo_timestamp(candidate_expires)
 
     return token, user_id, expires_at
+
+
+def _normalize_system_layout_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize /system/layout payload into the nested system object shape."""
+    layout = data.get("system")
+    if isinstance(layout, dict):
+        return layout
+
+    layout = data.get("systems")
+    if isinstance(layout, dict):
+        return layout
+    if isinstance(layout, list) and layout and isinstance(layout[0], dict):
+        return layout[0]
+
+    if isinstance(data.get("inverters"), list):
+        return data
+    return {}
 
 
 def _normalize_module_column(column: str) -> str:

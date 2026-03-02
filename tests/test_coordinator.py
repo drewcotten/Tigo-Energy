@@ -42,6 +42,7 @@ def _configure_summary_enrichment_calls(mock_client) -> None:
     mock_client.async_get_alerts_system.return_value = ([], {"totalCount": 0})
     mock_client.async_get_objects_system.return_value = []
     mock_client.async_get_system_layout.return_value = {}
+    mock_client.async_get_system_full.return_value = {}
 
 
 async def test_summary_coordinator_fetches_system_and_sources(hass):
@@ -225,6 +226,7 @@ async def test_summary_coordinator_alert_state_computation(hass):
     )
     mock_client.async_get_objects_system.return_value = [{"id": 123, "label": "A1"}]
     mock_client.async_get_system_layout.return_value = {}
+    mock_client.async_get_system_full.return_value = {}
 
     coordinator = TigoSummaryCoordinator(
         hass=hass,
@@ -265,6 +267,7 @@ async def test_summary_coordinator_alert_fetch_failure_is_soft(hass):
     mock_client.async_get_alerts_system.side_effect = TigoApiError("boom")
     mock_client.async_get_objects_system.return_value = []
     mock_client.async_get_system_layout.return_value = {}
+    mock_client.async_get_system_full.return_value = {}
 
     coordinator = TigoSummaryCoordinator(
         hass=hass,
@@ -335,6 +338,50 @@ async def test_summary_coordinator_uses_layout_fallback_for_module_labels(hass):
     assert arrays["string_57810"].name == "Array A"
     assert arrays["string_57810"].panel_labels == ("A1",)
     assert coordinator.data.systems[1001].module_array_map.get("A1") == "string_57810"
+
+
+async def test_summary_coordinator_uses_systems_full_fallback_for_arrays(hass):
+    """When layout is empty, systems/full should still provide array mappings."""
+    now = datetime.now(UTC)
+    telemetry = now - timedelta(minutes=8)
+
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.return_value = [{"system_id": 1001, "name": "Site One"}]
+    mock_client.async_get_system.return_value = {"name": "Site One", "timezone": "UTC"}
+    mock_client.async_get_summary.return_value = {"last_power_dc": 1200, "updated_on": now.isoformat()}
+    mock_client.async_get_sources.return_value = [{"source_id": "src-1", "name": "CCA", "last_checkin": now.isoformat()}]
+    mock_client.async_get_combined_csv.return_value = (
+        "Datetime,combined\n"
+        f"{telemetry.strftime('%Y/%m/%d %H:%M:%S')},900\n"
+    )
+    mock_client.async_get_alert_types.return_value = []
+    mock_client.async_get_alerts_system.return_value = ([], {"totalCount": 0})
+    mock_client.async_get_objects_system.return_value = []
+    mock_client.async_get_system_layout.return_value = {}
+    mock_client.async_get_system_full.return_value = {
+        "strings": [
+            {"string_id": 57810, "label": "String A", "short_label": "A"},
+        ],
+        "panels": [
+            {"object_id": 89287797, "panel_id": 650288, "string_id": 57810, "label": "A1"},
+            {"object_id": 89287798, "panel_id": 650289, "string_id": 57810, "label": "A2"},
+        ],
+    }
+
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={},
+    )
+    await coordinator.async_refresh()
+
+    system = coordinator.data.systems[1001]
+    assert system.arrays["string_57810"].panel_labels == ("A1", "A2")
+    assert system.module_array_map.get("A1") == "string_57810"
+    assert system.module_label_map.get("89287797") == "A1"
 
 
 async def test_module_coordinator_dedupes_older_points(hass):

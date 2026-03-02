@@ -383,6 +383,49 @@ async def test_get_system_layout_parses_systems_object(hass):
     assert layout["inverters"] == []
 
 
+async def test_get_system_layout_parses_system_object(hass):
+    """System layout should parse singular system payload shape."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with aioresponses() as mocked:
+        mocked.post(
+            f"{BASE}/user/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        mocked.get(
+            re.compile(rf"{BASE}/system/layout.*"),
+            status=200,
+            payload={"system": {"system_id": 1001, "inverters": [{"label": "Inv 1"}]}},
+        )
+
+        layout = await client.async_get_system_layout(1001)
+
+    assert layout["system_id"] == 1001
+    assert layout["inverters"][0]["label"] == "Inv 1"
+
+
+async def test_get_system_full_returns_payload(hass):
+    """Systems/full endpoint should return normalized dict payload."""
+    client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))
+
+    with aioresponses() as mocked:
+        mocked.post(
+            f"{BASE}/user/login",
+            status=200,
+            payload={"user": {"auth": "token-1", "user_id": 42}},
+        )
+        mocked.get(
+            re.compile(rf"{BASE}/systems/full.*"),
+            status=200,
+            payload={"strings": [{"string_id": 1, "label": "String A"}], "panels": []},
+        )
+
+        payload = await client.async_get_system_full(1001)
+
+    assert payload["strings"][0]["string_id"] == 1
+
+
 async def test_aggregate_csv_uses_key_header(hass):
     """Aggregate telemetry request should request semantic key headers."""
     client = TigoApiClient(hass, TigoAuthCredentials(username="u", password="p"))

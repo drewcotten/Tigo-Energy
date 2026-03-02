@@ -258,6 +258,25 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 arrays,
                 module_array_map,
             ) = _build_layout_mappings(layout_raw)
+            if not arrays:
+                try:
+                    system_full_raw = await self._client.async_get_system_full(system_id)
+                except TigoApiError as err:
+                    LOGGER.debug(
+                        "Unable to load systems/full fallback for system %s; array grouping may be unavailable: %s",
+                        system_id,
+                        err,
+                    )
+                else:
+                    (
+                        full_module_label_map,
+                        full_arrays,
+                        full_module_array_map,
+                    ) = _build_layout_mappings_from_system_full(system_full_raw)
+                    if full_arrays:
+                        layout_module_label_map = full_module_label_map
+                        arrays = full_arrays
+                        module_array_map = full_module_array_map
             module_label_map = dict(layout_module_label_map)
             module_label_map.update(object_module_label_map)
             for raw_module_id, semantic_label in module_label_map.items():
@@ -902,6 +921,124 @@ def _build_layout_mappings(
                     inverter_label=inverter_label,
                     panel_labels=tuple(sorted(set(panel_labels))),
                 )
+
+    return module_label_map, arrays, module_array_map
+
+
+def _build_layout_mappings_from_system_full(
+    systems_full_raw: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, ArraySnapshot], dict[str, str]]:
+    """Extract module labels, arrays, and module->array mapping from /systems/full."""
+    module_label_map: dict[str, str] = {}
+    arrays: dict[str, ArraySnapshot] = {}
+    module_array_map: dict[str, str] = {}
+
+    if not isinstance(systems_full_raw, dict):
+        return module_label_map, arrays, module_array_map
+
+    string_to_array_id: dict[int, str] = {}
+    array_panel_labels: dict[str, set[str]] = {}
+
+    mppt_by_id = {
+        mppt_id: item
+        for item in systems_full_raw.get("mppts", [])
+        if isinstance(item, dict)
+        if (mppt_id := _as_optional_int(item.get("mppt_id"))) is not None
+    }
+    inverter_by_id = {
+        inverter_id: item
+        for item in systems_full_raw.get("inverters", [])
+        if isinstance(item, dict)
+        if (inverter_id := _as_optional_int(item.get("inverter_id"))) is not None
+    }
+
+    for string_data in systems_full_raw.get("strings", []):
+        if not isinstance(string_data, dict):
+            continue
+        base_array_id = _array_id_from_string(string_data)
+        array_id = _unique_array_id(base_array_id, arrays)
+        string_id = _as_optional_int(string_data.get("string_id"))
+        if string_id is not None:
+            string_to_array_id[string_id] = array_id
+
+        short_label = _as_optional_str(string_data.get("short_label"))
+        mppt_id = _as_optional_int(string_data.get("mppt_id"))
+        inverter_id = _as_optional_int(string_data.get("inverter_id"))
+
+        mppt_label = None
+        if mppt_id is not None:
+            mppt = mppt_by_id.get(mppt_id)
+            if mppt is not None:
+                mppt_label = _as_optional_str(mppt.get("label"))
+                if inverter_id is None:
+                    inverter_id = _as_optional_int(mppt.get("inverter_id"))
+        inverter_label = (
+            _as_optional_str(inverter_by_id.get(inverter_id, {}).get("label"))
+            if inverter_id is not None
+            else None
+        )
+
+        arrays[array_id] = ArraySnapshot(
+            array_id=array_id,
+            name=_array_name_from_string(
+                label=_as_optional_str(string_data.get("label")),
+                short_label=short_label,
+                string_id=string_id,
+            ),
+            short_label=short_label,
+            string_id=string_id,
+            mppt_label=mppt_label,
+            inverter_label=inverter_label,
+            panel_labels=tuple(),
+        )
+        array_panel_labels[array_id] = set()
+
+    for panel in systems_full_raw.get("panels", []):
+        if not isinstance(panel, dict):
+            continue
+        label = _as_optional_str(panel.get("label"))
+        if not label or not LABEL_PATTERN.match(label):
+            continue
+
+        string_id = _as_optional_int(panel.get("string_id"))
+        array_id = string_to_array_id.get(string_id) if string_id is not None else None
+        if array_id is None:
+            base_array_id = f"string_{string_id}" if string_id is not None else "array_unknown"
+            array_id = _unique_array_id(base_array_id, arrays)
+            if string_id is not None:
+                string_to_array_id[string_id] = array_id
+            arrays[array_id] = ArraySnapshot(
+                array_id=array_id,
+                name=_array_name_from_string(label=None, short_label=None, string_id=string_id),
+                short_label=None,
+                string_id=string_id,
+                mppt_label=None,
+                inverter_label=None,
+                panel_labels=tuple(),
+            )
+            array_panel_labels[array_id] = set()
+
+        module_array_map[label] = array_id
+        array_panel_labels.setdefault(array_id, set()).add(label)
+        for key in ("object_id", "panel_id", "id"):
+            raw_id = panel.get(key)
+            if raw_id in (None, ""):
+                continue
+            raw_text = str(raw_id)
+            module_label_map[raw_text] = label
+            module_array_map[raw_text] = array_id
+
+    for array_id, array in list(arrays.items()):
+        panel_labels = tuple(sorted(array_panel_labels.get(array_id, set())))
+        arrays[array_id] = ArraySnapshot(
+            array_id=array.array_id,
+            name=array.name,
+            short_label=array.short_label,
+            string_id=array.string_id,
+            mppt_label=array.mppt_label,
+            inverter_label=array.inverter_label,
+            panel_labels=panel_labels,
+        )
 
     return module_label_map, arrays, module_array_map
 
