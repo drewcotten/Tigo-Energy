@@ -14,6 +14,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 - [Time-Lag Investigation Report](docs/tigo-integration-time-lag-investigation.md)
 - [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
 - [Read-Only Alerts Live Probe (2026-03-01)](docs/tigo-readonly-alerts-live-probe-2026-03-01.md)
+- [Entity Name Reference (Example IDs)](docs/entity-name-reference.md)
 
 ## Features
 
