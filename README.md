@@ -59,14 +59,13 @@ The value you see now is often the most recent **processed** cloud value, not th
 Treat these sensors as **latest cloud telemetry**, not true real-time measurements.
 For automations, check freshness fields such as `telemetry_lag_status`, `system_data_is_stale`, and `module_data_is_stale` before taking action.
 
-## Latest-State vs Historical Backfill
+## Tigo Service Advisory (Cloud Stability)
 
-This integration is a latest-state polling integration. It does not currently import delayed minute buckets into Home Assistant as retroactive historical points.
+On **February 20, 2026**, Tigo Support published an advisory noting intermittent EI Portal/API delays and temporary downtime that can cause systems to appear offline.
 
-Practical implication:
+Practical impact in Home Assistant: brief data interruptions can happen even when your local Home Assistant instance is healthy.
 
-- Sensor history reflects when Home Assistant received/accepted updated state, not a full reconstruction of every delayed upstream minute bucket.
-- Delayed telemetry still improves current state and lag diagnostics, but older out-of-order buckets may not appear as backfilled chart points.
+Source: [Tigo EI Portal/App Data Delays or Not available](https://support.tigoenergy.com/hc/en-us/articles/28330618201747-Tigo-EI-Portal-App-Data-Delays-or-Not-available)
 
 ## Requirements
 
@@ -126,24 +125,32 @@ Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers a
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
 Authentication behavior is internal: bearer tokens are obtained/stored by the integration, proactively renewed when `expires` is available, and retried once on `401` before triggering reauth.
 
-## Credential Storage and Security
+## Data Freshness and Cloud Lag
 
-This integration follows Home Assistant config entry guidance for handling user data:
+Tigo minute data can lag real time because field data and cloud-side processing are not instantaneous.
 
-- `username` and `password` are stored in `ConfigEntry.data` so the integration can reconnect and perform reauthentication without manual token steps.
-- User-configurable behavior (polling, notification toggles, thresholds) is stored in `ConfigEntry.options`.
-- Runtime-only objects (API client, coordinators, in-memory bearer token state) are kept in `ConfigEntry.runtime_data` and are not persisted by Home Assistant.
-- Diagnostics output redacts sensitive fields (`password`, auth/token keys) before export.
-- This integration does not write separate custom credential files.
+This integration uses a lag-aware strategy:
 
-Home Assistant docs this follows:
+- Poll summary/source data at configured cadence
+- For module data, query a rolling trailing window
+- On transient module API failures, retry once in-cycle and keep last-known module/array data for one failed cycle before marking unavailable
+- Optional: set `recent_cutoff_minutes` above `0` if your site/API needs a guard band
+- If a short window returns empty telemetry, retry once with a wider lookback and local filter
+- Drop future CSV bucket rows more than 5 minutes ahead
+- Dedupe repeated/late-arriving points
+- Mark data as stale in entity attributes when data age exceeds `stale_threshold_seconds`
 
-- [Config entries](https://developers.home-assistant.io/docs/config_entries_index)
-- [Config flow handler](https://developers.home-assistant.io/docs/config_entries_config_flow_handler/)
-- [Quality Scale: config flow (`ConfigEntry.data` vs `ConfigEntry.options`)](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow)
-- [Quality Scale: use `ConfigEntry.runtime_data`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/runtime-data/)
-- [Integration diagnostics and `async_redact_data`](https://developers.home-assistant.io/docs/core/integration_diagnostics)
-- [Quality Scale: reauthentication flow](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow)
+Availability behavior:
+
+- Entities stay available during expected cloud lag when coordinator updates are healthy and entity data exists.
+- Freshness is represented via lag/stale attributes and diagnostic sensors.
+- Alert entities are read-only and remain available even when no active alerts are present (`active_alert_count=0`).
+
+Timestamp handling rules:
+
+- ISO timestamps with offsets are normalized to UTC internally.
+- Date-only fields (for example `turn_on_date`) are treated as metadata dates, not freshness instants.
+- CSV `Datetime` values without offsets are interpreted as site-local bucket times (`system timezone -> Home Assistant timezone -> UTC`).
 
 ## Options
 
@@ -296,32 +303,6 @@ System and module entities also expose freshness context:
 - `module_data_age_seconds`
 - `module_data_is_stale`
 
-## Data Freshness and Cloud Lag
-
-Tigo minute data can lag real time because field data and cloud-side processing are not instantaneous.
-
-This integration uses a lag-aware strategy:
-
-- Poll summary/source data at configured cadence
-- For module data, query a rolling trailing window
-- Optional: set `recent_cutoff_minutes` above `0` if your site/API needs a guard band
-- If a short window returns empty telemetry, retry once with a wider lookback and local filter
-- Drop future CSV bucket rows more than 5 minutes ahead
-- Dedupe repeated/late-arriving points
-- Mark data as stale in entity attributes when data age exceeds `stale_threshold_seconds`
-
-Availability behavior:
-
-- Entities stay available during expected cloud lag when coordinator updates are healthy and entity data exists.
-- Freshness is represented via lag/stale attributes and diagnostic sensors.
-- Alert entities are read-only and remain available even when no active alerts are present (`active_alert_count=0`).
-
-Timestamp handling rules:
-
-- ISO timestamps with offsets are normalized to UTC internally.
-- Date-only fields (for example `turn_on_date`) are treated as metadata dates, not freshness instants.
-- CSV `Datetime` values without offsets are interpreted as site-local bucket times (`system timezone -> Home Assistant timezone -> UTC`).
-
 ## Sunset-Aware Alerting
 
 The integration can suppress data-quality alert escalation at night while keeping telemetry visible:
@@ -343,6 +324,25 @@ The integration can suppress data-quality alert escalation at night while keepin
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
 - **Module names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.
 - **Too many entities**: disable module telemetry or increase module poll interval.
+
+## Credential Storage and Security
+
+This integration follows Home Assistant config entry guidance for handling user data:
+
+- `username` and `password` are stored in `ConfigEntry.data` so the integration can reconnect and perform reauthentication without manual token steps.
+- User-configurable behavior (polling, notification toggles, thresholds) is stored in `ConfigEntry.options`.
+- Runtime-only objects (API client, coordinators, in-memory bearer token state) are kept in `ConfigEntry.runtime_data` and are not persisted by Home Assistant.
+- Diagnostics output redacts sensitive fields (`password`, auth/token keys) before export.
+- This integration does not write separate custom credential files.
+
+Home Assistant docs this follows:
+
+- [Config entries](https://developers.home-assistant.io/docs/config_entries_index)
+- [Config flow handler](https://developers.home-assistant.io/docs/config_entries_config_flow_handler/)
+- [Quality Scale: config flow (`ConfigEntry.data` vs `ConfigEntry.options`)](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow)
+- [Quality Scale: use `ConfigEntry.runtime_data`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/runtime-data/)
+- [Integration diagnostics and `async_redact_data`](https://developers.home-assistant.io/docs/core/integration_diagnostics)
+- [Quality Scale: reauthentication flow](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow)
 
 ## Development
 

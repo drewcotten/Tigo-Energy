@@ -564,6 +564,101 @@ async def test_module_coordinator_dedupes_older_points(hass):
     second_snapshot = coordinator.data
     assert second_snapshot.dedupe_ignored_points > 0
     assert second_snapshot.points_by_key[(1001, "mod1", "Pin")].value == 110
+    assert second_snapshot.freshness.latest_stable_timestamp is not None
+    assert second_snapshot.freshness.lag_seconds is not None
+
+
+async def test_module_coordinator_retries_once_on_transient_error(hass):
+    """Transient module fetch error should be retried once in-cycle."""
+    now = datetime.now(UTC)
+    csv_text = (
+        "Datetime,mod1\n"
+        f"{now.strftime('%Y/%m/%d %H:%M:%S')},100\n"
+    )
+    state = {"calls": 0}
+
+    def side_effect(*args, **kwargs):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise TigoApiConnectionError("temporary network issue")
+        return csv_text
+
+    mock_client = AsyncMock()
+    mock_client.async_get_aggregate_csv.side_effect = side_effect
+
+    coordinator = TigoModuleCoordinator(
+        hass=hass,
+        client=mock_client,
+        summary_coordinator=DummySummary(),
+        options={},
+    )
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is True
+    assert state["calls"] == 5
+    assert coordinator.data.points_by_key[(1001, "mod1", "Pin")].value == 100
+
+
+async def test_module_coordinator_keeps_cached_snapshot_for_one_failed_cycle(hass):
+    """Single failed module poll should serve cached snapshot instead of unavailable."""
+    now = datetime.now(UTC)
+    csv_text = (
+        "Datetime,mod1\n"
+        f"{now.strftime('%Y/%m/%d %H:%M:%S')},100\n"
+    )
+
+    mock_client = AsyncMock()
+    mock_client.async_get_aggregate_csv.return_value = csv_text
+
+    coordinator = TigoModuleCoordinator(
+        hass=hass,
+        client=mock_client,
+        summary_coordinator=DummySummary(),
+        options={},
+    )
+
+    await coordinator.async_refresh()
+    first_snapshot = coordinator.data
+    first_fetched = first_snapshot.freshness.fetched_at
+
+    mock_client.async_get_aggregate_csv.side_effect = TigoApiConnectionError("offline")
+    await coordinator.async_refresh()
+
+    second_snapshot = coordinator.data
+    assert coordinator.last_update_success is True
+    assert second_snapshot.points_by_key[(1001, "mod1", "Pin")].value == 100
+    assert second_snapshot.freshness.fetched_at > first_fetched
+    assert second_snapshot.freshness.latest_stable_timestamp is not None
+
+
+async def test_module_coordinator_second_failed_cycle_escalates(hass):
+    """Second consecutive failed module poll should escalate to UpdateFailed."""
+    now = datetime.now(UTC)
+    csv_text = (
+        "Datetime,mod1\n"
+        f"{now.strftime('%Y/%m/%d %H:%M:%S')},100\n"
+    )
+
+    mock_client = AsyncMock()
+    mock_client.async_get_aggregate_csv.return_value = csv_text
+
+    coordinator = TigoModuleCoordinator(
+        hass=hass,
+        client=mock_client,
+        summary_coordinator=DummySummary(),
+        options={},
+    )
+
+    await coordinator.async_refresh()
+
+    mock_client.async_get_aggregate_csv.side_effect = TigoApiConnectionError("offline")
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success is True
+
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success is False
+    assert isinstance(coordinator.last_exception, UpdateFailed)
 
 
 async def test_module_coordinator_uses_semantic_module_labels(hass):

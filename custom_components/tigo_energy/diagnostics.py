@@ -8,17 +8,25 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_PASSWORD
+from .const import CONF_PASSWORD, CONF_USERNAME
 from .models import TigoRuntimeData
 
-REDACT_KEYS = {CONF_PASSWORD, "auth", "token", "bearer", "Authorization"}
+REDACT_KEYS = {
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    "email",
+    "auth",
+    "token",
+    "bearer",
+    "Authorization",
+}
 
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    runtime: TigoRuntimeData | None = entry.runtime_data
+    runtime: TigoRuntimeData | None = getattr(entry, "runtime_data", None)
 
     diagnostics: dict[str, Any] = {
         "entry": async_redact_data(dict(entry.data), REDACT_KEYS),

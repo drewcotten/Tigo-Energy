@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -92,6 +94,16 @@ SHUTDOWN_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 ARRAY_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+REQUEST_STATUS_PATTERN = re.compile(r"status\s+(\d{3})", flags=re.IGNORECASE)
+MODULE_TRANSIENT_RETRY_ATTEMPTS = 1
+MODULE_TRANSIENT_RETRY_DELAY_SECONDS = 1.0
+
+
+class _UseCachedModuleSnapshot(Exception):
+    """Internal control flow for serving cached module snapshot."""
+
+    def __init__(self, snapshot: ModuleSnapshot) -> None:
+        self.snapshot = snapshot
 
 
 class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
@@ -714,6 +726,8 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         )
         self._points_by_key: dict[tuple[int, str, str], ModulePoint] = {}
         self._low_rssi_poll_streak = 0
+        self._last_good_snapshot: ModuleSnapshot | None = None
+        self._consecutive_refresh_failures = 0
 
         interval = int(options.get(OPT_MODULE_POLL_SECONDS, DEFAULT_MODULE_POLL_SECONDS))
         super().__init__(
@@ -792,71 +806,123 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         future_rows_dropped = 0
         invalid_timestamp_rows = 0
 
-        for system_id in system_ids:
-            system_timezone = _system_timezone_for_id(self._summary_coordinator.data.systems, system_id)
-            naive_tz = _resolve_naive_timezone(
-                system_timezone=system_timezone,
-                hass_timezone=self.hass.config.time_zone,
-            )
-            module_label_map = _system_module_label_map(self._summary_coordinator.data.systems, system_id)
-            self._canonicalize_cached_points_for_system(system_id, module_label_map)
+        try:
+            for system_id in system_ids:
+                system_timezone = _system_timezone_for_id(
+                    self._summary_coordinator.data.systems,
+                    system_id,
+                )
+                naive_tz = _resolve_naive_timezone(
+                    system_timezone=system_timezone,
+                    hass_timezone=self.hass.config.time_zone,
+                )
+                module_label_map = _system_module_label_map(
+                    self._summary_coordinator.data.systems,
+                    system_id,
+                )
+                self._canonicalize_cached_points_for_system(system_id, module_label_map)
 
-            for metric in METRICS:
-                try:
-                    parsed, fallback_attempted, fallback_hit = await self._async_fetch_metric_with_fallback(
-                        system_id=system_id,
-                        metric=metric,
-                        window_start=window_start,
-                        window_end=window_end,
-                        backfill_minutes=backfill_minutes,
-                        naive_tz=naive_tz,
-                    )
-                except TigoApiRateLimitError as err:
-                    await self._async_report_connection_recovered()
-                    raise UpdateFailed(
-                        f"Tigo API rate limited while fetching module metric {metric} for system {system_id}",
-                        retry_after=err.retry_after,
-                    ) from err
-                except TigoApiAuthError as err:
-                    await self._async_report_connection_recovered()
-                    raise ConfigEntryAuthFailed from err
-                except TigoApiConnectionError as err:
-                    await self._async_report_connection_failure()
-                    raise UpdateFailed("Could not reach Tigo API") from err
-                except TigoApiError as err:
-                    await self._async_report_connection_recovered()
-                    raise UpdateFailed(
-                        f"Failed to fetch module metric {metric} for system {system_id}: {err}"
-                    ) from err
+                for metric in METRICS:
+                    attempt = 0
+                    while True:
+                        try:
+                            parsed, fallback_attempted, fallback_hit = (
+                                await self._async_fetch_metric_with_fallback(
+                                    system_id=system_id,
+                                    metric=metric,
+                                    window_start=window_start,
+                                    window_end=window_end,
+                                    backfill_minutes=backfill_minutes,
+                                    naive_tz=naive_tz,
+                                )
+                            )
+                            break
+                        except TigoApiAuthError as err:
+                            await self._async_report_connection_recovered()
+                            raise ConfigEntryAuthFailed from err
+                        except (TigoApiConnectionError, TigoApiRateLimitError, TigoApiError) as err:
+                            retryable = _is_retryable_module_error(err)
+                            if retryable and attempt < MODULE_TRANSIENT_RETRY_ATTEMPTS:
+                                attempt += 1
+                                LOGGER.debug(
+                                    "Retrying module metric fetch after transient error "
+                                    "(system=%s metric=%s attempt=%s error=%s)",
+                                    system_id,
+                                    metric,
+                                    attempt,
+                                    err,
+                                )
+                                await asyncio.sleep(MODULE_TRANSIENT_RETRY_DELAY_SECONDS)
+                                continue
 
-                if fallback_attempted:
-                    fallback_attempts += 1
-                if fallback_hit:
-                    fallback_hits += 1
-                future_rows_dropped += parsed.future_rows_dropped
-                invalid_timestamp_rows += parsed.invalid_timestamp_rows
+                            if isinstance(err, TigoApiConnectionError):
+                                await self._async_report_connection_failure()
+                                raise self._module_update_failed_or_cached(
+                                    update_failed=UpdateFailed("Could not reach Tigo API"),
+                                    stale_threshold=stale_threshold,
+                                    failure_reason=(
+                                        f"connection error while fetching {metric} "
+                                        f"for system {system_id}: {err}"
+                                    ),
+                                ) from err
+                            if isinstance(err, TigoApiRateLimitError):
+                                await self._async_report_connection_recovered()
+                                raise self._module_update_failed_or_cached(
+                                    update_failed=UpdateFailed(
+                                        (
+                                            "Tigo API rate limited while fetching module metric "
+                                            f"{metric} for system {system_id}"
+                                        ),
+                                        retry_after=err.retry_after,
+                                    ),
+                                    stale_threshold=stale_threshold,
+                                    failure_reason=(
+                                        f"rate limit while fetching {metric} "
+                                        f"for system {system_id}: {err}"
+                                    ),
+                                ) from err
 
-                for raw_module_id, points in parsed.rows_by_module.items():
-                    if not points:
-                        continue
-                    module_id = module_label_map.get(str(raw_module_id), str(raw_module_id))
-                    point_ts, point_value = max(points, key=lambda item: item[0])
-                    key = (system_id, module_id, metric)
-                    current = self._points_by_key.get(key)
-                    if current and point_ts <= current.timestamp:
-                        dedupe_ignored_points += 1
-                        continue
+                            await self._async_report_connection_recovered()
+                            raise self._module_update_failed_or_cached(
+                                update_failed=UpdateFailed(
+                                    f"Failed to fetch module metric {metric} for system {system_id}: {err}"
+                                ),
+                                stale_threshold=stale_threshold,
+                                failure_reason=(
+                                    f"api error while fetching {metric} for system {system_id}: {err}"
+                                ),
+                            ) from err
 
-                    module_point = ModulePoint(
-                        system_id=system_id,
-                        module_id=module_id,
-                        metric=metric,
-                        value=point_value,
-                        timestamp=point_ts,
-                    )
-                    self._points_by_key[key] = module_point
-                    if latest_seen is None or point_ts > latest_seen:
-                        latest_seen = point_ts
+                    if fallback_attempted:
+                        fallback_attempts += 1
+                    if fallback_hit:
+                        fallback_hits += 1
+                    future_rows_dropped += parsed.future_rows_dropped
+                    invalid_timestamp_rows += parsed.invalid_timestamp_rows
+
+                    for raw_module_id, points in parsed.rows_by_module.items():
+                        if not points:
+                            continue
+                        module_id = module_label_map.get(str(raw_module_id), str(raw_module_id))
+                        point_ts, point_value = max(points, key=lambda item: item[0])
+                        key = (system_id, module_id, metric)
+                        current = self._points_by_key.get(key)
+                        if current and point_ts <= current.timestamp:
+                            dedupe_ignored_points += 1
+                            continue
+
+                        module_point = ModulePoint(
+                            system_id=system_id,
+                            module_id=module_id,
+                            metric=metric,
+                            value=point_value,
+                            timestamp=point_ts,
+                        )
+                        self._points_by_key[key] = module_point
+                        if latest_seen is None or point_ts > latest_seen:
+                            latest_seen = point_ts
+        except _UseCachedModuleSnapshot as use_cached:
+            return use_cached.snapshot
 
         by_system: dict[int, dict[str, dict[str, ModulePoint]]] = {}
         for point in self._points_by_key.values():
@@ -886,8 +952,19 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         else:
             self._low_rssi_poll_streak = 0
 
+        latest_available = latest_seen
+        if latest_available is None:
+            latest_available = _latest_module_point_timestamp(
+                self._points_by_key,
+                tracked_system_ids=set(system_ids),
+            )
+
         fetched_at = datetime.now(UTC)
-        lag_seconds = (fetched_at - latest_seen).total_seconds() if latest_seen else None
+        lag_seconds = (
+            (fetched_at - latest_available).total_seconds()
+            if latest_available
+            else None
+        )
         is_stale = lag_seconds is None or lag_seconds > stale_threshold
         await self._async_report_connection_recovered()
         if (
@@ -907,11 +984,11 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         elif (not notify_low_rssi) or low_rssi_count == 0 or not low_rssi_guard_active:
             await self._async_clear_low_rssi_alert()
 
-        return ModuleSnapshot(
+        snapshot = ModuleSnapshot(
             points_by_key=dict(self._points_by_key),
             by_system=by_system,
             freshness=FreshnessState(
-                latest_stable_timestamp=latest_seen,
+                latest_stable_timestamp=latest_available,
                 fetched_at=fetched_at,
                 lag_seconds=lag_seconds,
                 is_stale=is_stale,
@@ -925,6 +1002,9 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             watch_rssi_module_count=watch_rssi_count,
             worst_rssi=worst_rssi,
         )
+        self._last_good_snapshot = snapshot
+        self._consecutive_refresh_failures = 0
+        return snapshot
 
     def _canonicalize_cached_points_for_system(
         self,
@@ -1062,6 +1142,49 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         if self._connection_notifier is None:
             return
         await self._connection_notifier.async_clear_low_rssi_alert()
+
+    def _module_update_failed_or_cached(
+        self,
+        *,
+        update_failed: UpdateFailed,
+        stale_threshold: int,
+        failure_reason: str,
+    ) -> UpdateFailed | _UseCachedModuleSnapshot:
+        """Return cached snapshot for first transient failure, else propagate failure."""
+        cached = self._cached_snapshot_for_single_failure(stale_threshold=stale_threshold)
+        if cached is None:
+            self._consecutive_refresh_failures += 1
+            return update_failed
+
+        self._consecutive_refresh_failures += 1
+        LOGGER.warning(
+            "Using cached module snapshot after transient module poll failure "
+            "(failure_streak=%s): %s",
+            self._consecutive_refresh_failures,
+            failure_reason,
+        )
+        return _UseCachedModuleSnapshot(cached)
+
+    def _cached_snapshot_for_single_failure(self, *, stale_threshold: int) -> ModuleSnapshot | None:
+        """Return a refreshed cached module snapshot for one failure cycle."""
+        if self._consecutive_refresh_failures > 0:
+            return None
+
+        snapshot = self._last_good_snapshot
+        if snapshot is None:
+            return None
+
+        latest = snapshot.freshness.latest_stable_timestamp
+        fetched_at = datetime.now(UTC)
+        lag_seconds = (fetched_at - latest).total_seconds() if latest else None
+        is_stale = lag_seconds is None or lag_seconds > stale_threshold
+        freshness = FreshnessState(
+            latest_stable_timestamp=latest,
+            fetched_at=fetched_at,
+            lag_seconds=lag_seconds,
+            is_stale=is_stale,
+        )
+        return replace(snapshot, freshness=freshness)
 
 
 def _build_module_label_map(objects_raw: list[dict[str, Any]]) -> dict[str, str]:
@@ -1655,6 +1778,25 @@ def _system_guard_active(system: SystemSnapshot | Any | None) -> bool:
     return True
 
 
+def _is_retryable_module_error(err: Exception) -> bool:
+    """Return True for transient/retryable module polling errors."""
+    if isinstance(err, (TigoApiConnectionError, TigoApiRateLimitError)):
+        return True
+    if isinstance(err, TigoApiAuthError):
+        return False
+    if not isinstance(err, TigoApiError):
+        return False
+
+    match = REQUEST_STATUS_PATTERN.search(str(err))
+    if not match:
+        return False
+    try:
+        status_code = int(match.group(1))
+    except ValueError:
+        return False
+    return 500 <= status_code <= 599
+
+
 def _parsed_has_points(parsed: ParsedAggregateCsv) -> bool:
     """Return true when parsed rows contain at least one metric value."""
     return any(points for points in parsed.rows_by_module.values())
@@ -1681,6 +1823,21 @@ def _latest_positive_timestamp(parsed: ParsedAggregateCsv) -> datetime | None:
                 continue
             if latest is None or ts > latest:
                 latest = ts
+    return latest
+
+
+def _latest_module_point_timestamp(
+    points_by_key: Mapping[tuple[int, str, str], ModulePoint],
+    *,
+    tracked_system_ids: set[int],
+) -> datetime | None:
+    """Return newest cached module point timestamp for tracked systems."""
+    latest: datetime | None = None
+    for (system_id, _module_id, _metric), point in points_by_key.items():
+        if tracked_system_ids and system_id not in tracked_system_ids:
+            continue
+        if latest is None or point.timestamp > latest:
+            latest = point.timestamp
     return latest
 
 
