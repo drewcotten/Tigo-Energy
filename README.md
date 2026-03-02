@@ -87,7 +87,19 @@ Practical implication:
 
 ### HACS custom repository
 
-You can add this repository as a custom integration source in HACS.
+1. Open **HACS** in Home Assistant.
+2. Go to **HACS > Integrations**.
+3. Open the menu (top-right) and choose **Custom repositories**.
+4. Add repository URL: `https://github.com/drewcotten/Tigo-Energy`
+5. Set category to **Integration**.
+6. Click **Add**.
+7. Search for **Tigo Energy** in HACS and open it.
+8. Click **Download** (choose a specific version if needed).
+9. Restart Home Assistant.
+10. Go to **Settings > Devices & Services > Add Integration**.
+11. Search for **Tigo Energy** and complete setup.
+
+If you want beta/prerelease builds, enable prerelease versions for this repository in HACS before downloading.
 
 ## Configuration Flow
 
