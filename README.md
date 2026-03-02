@@ -19,6 +19,34 @@ What you get after setup:
 
 No YAML is required.
 
+## Tigo Hardware Supported
+
+This integration is **cloud/API based** (Tigo Premium API). It exposes hardware that appears in your Tigo EI cloud data.
+
+Currently exposed in Home Assistant:
+
+- **Cloud Connect Advanced (CCA) / source gateway**:
+  - Exposed as source devices (for example `Primary CCA`) with `last_checkin`, `control_state`, firmware, serial, and gateway count.
+- **TS4 monitored panel-level hardware** (for example TS4-A/TS4-X monitoring-capable systems):
+  - Exposed as per-panel entities labeled like `A1`, `B4`, etc.
+  - Panel telemetry comes from API aggregate metrics: `Pin`, `Vin`, `Iin`, `RSSI`.
+- **Strings/arrays**:
+  - Exposed as array devices/sensors derived from Tigo layout/string+panel mapping.
+
+Not currently exposed as dedicated HA devices/entities:
+
+- EI inverter entities
+- EI battery entities
+- TAP as its own standalone entity
+- RSS Transmitter as its own standalone entity
+
+As time permits, I will try and add support for additional entities, but without the specific hardware, I will not be able to test. Feel free to fork, open a topic or issue.
+
+Notes:
+
+- This integration is read-only and does not send hardware control commands.
+- If a device is not returned by your Premium API scope, it cannot be surfaced here.
+
 ## Documentation
 
 - [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
