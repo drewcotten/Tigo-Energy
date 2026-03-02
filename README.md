@@ -126,6 +126,25 @@ Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers a
 Reauthentication is supported via Home Assistant UI when credentials/tokens become invalid.
 Authentication behavior is internal: bearer tokens are obtained/stored by the integration, proactively renewed when `expires` is available, and retried once on `401` before triggering reauth.
 
+## Credential Storage and Security
+
+This integration follows Home Assistant config entry guidance for handling user data:
+
+- `username` and `password` are stored in `ConfigEntry.data` so the integration can reconnect and perform reauthentication without manual token steps.
+- User-configurable behavior (polling, notification toggles, thresholds) is stored in `ConfigEntry.options`.
+- Runtime-only objects (API client, coordinators, in-memory bearer token state) are kept in `ConfigEntry.runtime_data` and are not persisted by Home Assistant.
+- Diagnostics output redacts sensitive fields (`password`, auth/token keys) before export.
+- This integration does not write separate custom credential files.
+
+Home Assistant docs this follows:
+
+- [Config entries](https://developers.home-assistant.io/docs/config_entries_index)
+- [Config flow handler](https://developers.home-assistant.io/docs/config_entries_config_flow_handler/)
+- [Quality Scale: config flow (`ConfigEntry.data` vs `ConfigEntry.options`)](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-flow)
+- [Quality Scale: use `ConfigEntry.runtime_data`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/runtime-data/)
+- [Integration diagnostics and `async_redact_data`](https://developers.home-assistant.io/docs/core/integration_diagnostics)
+- [Quality Scale: reauthentication flow](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/reauthentication-flow)
+
 ## Options
 
 All options are configurable in **Settings > Devices & Services > Tigo Energy > Configure**:
