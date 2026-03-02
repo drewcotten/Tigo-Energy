@@ -7,22 +7,22 @@ Quickly validate what the Tigo v3 API currently returns for read-only alert/syst
 - Tooling: `/Users/drewcotten/Github/raw-tigo` (`TigoClient` + authenticated endpoint probes)
 - Date/time: 2026-03-01 (America/Denver)
 - Calls kept low (well below 30/min)
-- System tested: `system_id=174596`
+- System tested: `system_id=<SYSTEM_ID>`
 
 Raw artifact:
-- `/Users/drewcotten/Github/raw-tigo/data/alert_readonly_probe_174596_20260301T233946Z.json`
+- `/Users/drewcotten/Github/raw-tigo/data/alert_readonly_probe_<SYSTEM_ID>_20260301T233946Z.json`
 
 ## Endpoints tested and results
 
 | Endpoint | Result | Observed response shape | Notes |
 |---|---|---|---|
-| `GET /alerts/system?system_id=174596` | `200` | `{ "alerts": [...], "_links": {...}, "_meta": {...} }` | Active alerts were `0` at test time. `_meta` present and usable for count/paging. |
+| `GET /alerts/system?system_id=<SYSTEM_ID>` | `200` | `{ "alerts": [...], "_links": {...}, "_meta": {...} }` | Active alerts were `0` at test time. `_meta` present and usable for count/paging. |
 | `GET /alerts/types` | `200` | `{ "alert_types": [...] }` | Returned 9 types; includes stable `unique_id` + title text for classification/mapping. |
-| `GET /alerts/view?id=174596&language=EN` | `404` | n/a | Not reliable for this account/host; should not be required in MVP. |
-| `GET /alert-subs/list?id=174596` | `200` | `{ "api_event_subs": [...] }` | Returned 10 event subscription definitions, including PV-Off shutdown message title text. |
-| `GET /sources/system?system_id=174596` | `200` | `{ "sources": [...] }` | `control_state`, `last_checkin`, `sw_version`, `gateway_count` available. |
-| `GET /data/summary?system_id=174596` | `200` | `{ "summary": {...} }` | `last_power_dc`, daily/YTD/lifetime energy available. |
-| `GET /objects/system?system_id=174596` | `200` | `{ "objects": [...] }` | Object `label` contains user-facing module labels (`A1`, `A2`, `B4`, `C10`, etc.). |
+| `GET /alerts/view?id=<SYSTEM_ID>&language=EN` | `404` | n/a | Not reliable for this account/host; should not be required in MVP. |
+| `GET /alert-subs/list?id=<SYSTEM_ID>` | `200` | `{ "api_event_subs": [...] }` | Returned 10 event subscription definitions, including PV-Off shutdown message title text. |
+| `GET /sources/system?system_id=<SYSTEM_ID>` | `200` | `{ "sources": [...] }` | `control_state`, `last_checkin`, `sw_version`, `gateway_count` available. |
+| `GET /data/summary?system_id=<SYSTEM_ID>` | `200` | `{ "summary": {...} }` | `last_power_dc`, daily/YTD/lifetime energy available. |
+| `GET /objects/system?system_id=<SYSTEM_ID>` | `200` | `{ "objects": [...] }` | Object `label` contains user-facing module labels (`A1`, `A2`, `B4`, `C10`, etc.). |
 
 ## Key payload examples (sanitized)
 
