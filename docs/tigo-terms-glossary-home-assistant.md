@@ -19,8 +19,8 @@ Notes:
 
 | Tigo term | Home Assistant mapping | Exposed | Notes |
 |---|---|---|---|
-| `Pin` | `module_pin`, `array_power` | Yes (panel on / array on) | Panel input power (W) and derived per-array total power. |
-| `Vin` | `module_vin`, `array_voltage`, `array_voltage_average`, `array_voltage_min`, `array_voltage_max` | Yes (panel on / array on) | Panel voltage and derived per-array voltage diagnostics. |
+| `Pin` | `module_pin`, `array_power` | Yes (panel on / array on) | Panel input power (W) and derived per-array power sum. |
+| `Vin` | `module_vin`, `array_voltage`, `array_voltage_average`, `array_voltage_min`, `array_voltage_max` | Yes (panel on / array on) | `array_voltage` is the sum of panel voltages; average/min/max remain diagnostics. |
 | `Iin` | `module_iin`, `array_current_average`, `array_current_min`, `array_current_max` | Yes (panel on / array on) | Panel current and derived per-array current diagnostics. |
 | `RSSI` | `module_rssi`, `array_rssi_*`, `low_rssi_module_count`, `watch_rssi_module_count`, `worst_module_rssi` | Yes (panel on / array on) | Panel RSSI plus array/system RSSI diagnostics. |
 | `Combined Pin` (`/data/combined?param=Pin`) | `telemetry_lag_minutes` (derived), `heartbeat_age_minutes` (derived) | Yes (derived diagnostics) | Combined Pin buckets drive telemetry freshness lag calculations. |
@@ -88,7 +88,10 @@ These are not raw Tigo field names, but the integration computes and exposes the
 | Derived field | Home Assistant mapping | Notes |
 |---|---|---|
 | Latest stable timestamp | `latest_stable_data_timestamp` | System-level freshness sensor. |
-| Stale/freshness flags | `is_stale`, `data_lag_seconds`, `system_data_*`, `module_data_*` attributes | Added to coordinator-backed entities for global + per-system/per-panel freshness context. |
+| Stale/freshness flags | `is_stale`, `data_lag_seconds`, `system_data_*`, `module_data_*` attributes | `system_data_*` is on coordinator-backed entities; `module_data_*` is on panel telemetry entities. |
 | Telemetry lag | `telemetry_lag_minutes` + attributes | Attributes include `telemetry_lag_status`, thresholds, and timestamp references. |
+| Array latest stable panel timestamp | `array_latest_stable_panel_data_timestamp` + attributes | Latest non-empty panel `Pin` timestamp within that array. |
+| Array telemetry lag | `array_telemetry_lag_minutes` + attributes | `max(0, latest_source_checkin - latest_array_panel_pin_timestamp)` with `ok/warning/critical/unknown` status. |
 | Heartbeat age | `heartbeat_age_minutes` + attributes | Derived from latest source heartbeat recency. |
 | RSSI status label | `rssi_status` attribute on `module_rssi` | Values: `good`, `watch`, `alert`. |
+| Panel identity attributes | `module_id`, `raw_module_id` | `module_id` is semantic label (`A1`); `raw_module_id` preserves raw module/object ID when available. |

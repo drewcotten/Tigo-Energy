@@ -136,7 +136,7 @@ Tigo minute data can lag real time because field data and cloud-side processing 
 This integration uses a lag-aware strategy:
 
 - Poll summary/source data at configured cadence
-- For module data, query a rolling trailing window
+- For array/panel telemetry data, query a rolling trailing window
 - On transient module API failures, retry once in-cycle and keep last-known module/array data for one failed cycle before marking unavailable
 - Optional: set `recent_cutoff_minutes` above `0` if your site/API needs a guard band
 - If a short window returns empty telemetry, retry once with a wider lookback and local filter
@@ -184,14 +184,16 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 
 ## Entities
 
-These are the exact Home Assistant sensor names created by this integration.
+These are the entity types and display names created by this integration.
+For concrete `sensor.xxx` and `binary_sensor.xxx` examples, see [Entity Name Reference](docs/entity-name-reference.md).
 
 Entity footprint planning:
 
-- Array ON, Panel OFF (new default): 19 sensors per system when one source is present (14 system-level + 5 source-level), plus 2 system-level binary sensors, plus 3 RSSI aggregate sensors per system and 15 array sensors per detected array/string. Add 5 sensors per additional source.
-- Array ON, Panel ON: adds 4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`) on top of the default footprint.
-- Array OFF, Panel ON: panel-only module telemetry (4 panel sensors per panel), without array or RSSI aggregate sensors.
-- Array OFF, Panel OFF: no module-derived panel/array/RSSI entities.
+- Per system baseline: 14 system sensors + 2 system binary sensors.
+- Per source: 5 source sensors.
+- If array telemetry is enabled (default `on`): +15 array sensors per array and +3 system RSSI aggregate sensors.
+- If panel telemetry is enabled (default `off`): +4 panel sensors per panel (`Pin`, `Vin`, `Iin`, `RSSI`).
+- If both array and panel telemetry are disabled: panel/array/RSSI module-derived entities are not created.
 
 ### System device (`<System Name>`)
 
@@ -242,6 +244,8 @@ System entities/devices are created per configured system subentry, including ca
 - Array module count
 - Array reporting module count
 - Array reporting coverage
+- Array latest stable panel data timestamp
+- Array telemetry lag
 
 ### Panel device (`<System Name> Panel <panel_label>`, panel telemetry opt-in)
 
@@ -258,6 +262,7 @@ Panel sensor attributes include:
 When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`) and are associated to array devices derived from `/system/layout`. If a semantic label is not present, the integration falls back to module ID-style naming.
 For multi-system accounts, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.
 Panel entities are created from Tigo topology/inventory labels and remain present regardless of time of day; when no recent telemetry point exists (for example overnight), panel sensor values show as unknown until new points arrive.
+Array lag/freshness sensors are calculated from the latest non-empty panel `Pin` points for each array and are independent from system-level lag derived from combined telemetry.
 
 ### Additional system diagnostics (when array telemetry is enabled)
 
@@ -302,11 +307,14 @@ Alert sensors and alert binary sensors expose:
 - `latest_alert_description_html`
 - `latest_alert_archived`
 
-System and module entities also expose freshness context:
+All coordinator-backed entities expose system freshness context:
 
 - `system_data_timestamp`
 - `system_data_age_seconds`
 - `system_data_is_stale`
+
+Panel telemetry sensors additionally expose:
+
 - `module_data_timestamp` (plus backward-compatible `module_latest_timestamp`)
 - `module_data_age_seconds`
 - `module_data_is_stale`
@@ -330,7 +338,7 @@ The integration can suppress data-quality alert escalation at night while keepin
 - **Telemetry lag alert**: when `notify_telemetry_lag` is enabled, a Home Assistant persistent notification appears when heartbeat-vs-telemetry lag is critical (`>=45m`) for 2 consecutive summary polls and clears when critical lag resolves.
 - **No systems found**: confirm account has system access and Premium/API entitlement.
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
-- **Module names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.
+- **Panel names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.
 - **Too many entities**: disable panel telemetry and/or array telemetry, or increase module poll interval.
 
 ## Credential Storage and Security

@@ -229,6 +229,12 @@
       "array_reporting_coverage": {
         "name": "Array reporting coverage"
       },
+      "array_latest_stable_panel_data_timestamp": {
+        "name": "Array latest stable panel data timestamp"
+      },
+      "array_telemetry_lag_minutes": {
+        "name": "Array telemetry lag"
+      },
       "module_pin": {
         "name": "Input power"
       },

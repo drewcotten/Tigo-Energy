@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -871,6 +871,20 @@ async def test_array_sensor_computes_derived_metrics(hass):
         array_id="string_57810",
         description=_array_metric("array_rssi_low_count"),
     )
+    latest_stable_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_latest_stable_panel_data_timestamp"),
+    )
+    lag_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_57810",
+        description=_array_metric("array_telemetry_lag_minutes"),
+    )
 
     assert power_sensor.native_value == 250.0
     assert voltage_sensor.native_value == 80.0
@@ -878,10 +892,236 @@ async def test_array_sensor_computes_derived_metrics(hass):
     assert coverage_sensor.native_value == 100.0
     assert worst_rssi_sensor.native_value == 78.0
     assert low_rssi_count_sensor.native_value == 1
+    assert latest_stable_sensor.native_value == now
+    assert lag_sensor.native_value == 0.0
     assert power_sensor.device_info["name"] == "Site One Array A"
     attrs = coverage_sensor.extra_state_attributes
     assert attrs["array_module_count"] == 2
     assert attrs["array_reporting_module_count"] == 2
+    lag_attrs = lag_sensor.extra_state_attributes
+    assert lag_attrs["array_telemetry_lag_status"] == "ok"
+    assert lag_attrs["array_lag_warning_minutes"] == 20
+    assert lag_attrs["array_lag_critical_minutes"] == 45
+    assert lag_attrs["array_latest_source_checkin"] == now
+    assert lag_attrs["array_latest_non_empty_panel_timestamp"] == now
+    assert lag_attrs["array_lag_basis"] == "Pin"
+    assert lag_attrs["array_panel_data_age_seconds"] == 0.0
+    assert lag_attrs["array_panel_data_is_stale"] is False
+
+
+async def test_array_lag_sensor_handles_missing_pin_or_source(hass):
+    """Array lag/timestamp should be unknown without Pin point or source check-in."""
+    now = datetime.now(UTC)
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={
+            1001: SystemSnapshot(
+                system_id=1001,
+                name="Site One",
+                timezone="UTC",
+                address=None,
+                latitude=None,
+                longitude=None,
+                turn_on_date="2025-08-24",
+                power_rating=5000.0,
+                summary={"last_power_dc": 1200},
+                sources=[],
+                freshest_timestamp=now,
+                system_data_age_seconds=60.0,
+                system_data_is_stale=False,
+                latest_source_checkin=None,
+                latest_non_empty_telemetry_timestamp=None,
+                heartbeat_age_seconds=None,
+                telemetry_lag_seconds=None,
+                telemetry_lag_status="unknown",
+                alert_state=_default_alert_state(),
+                module_label_map={},
+                arrays={
+                    "string_1": ArraySnapshot(
+                        array_id="string_1",
+                        name="Array A",
+                        short_label="A",
+                        string_id=1,
+                        mppt_label="MPPT 1",
+                        inverter_label="Inverter 1",
+                        panel_labels=("A1",),
+                    )
+                },
+                module_array_map={"A1": "string_1"},
+            )
+        },
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={(1001, "A1", "Vin"): ModulePoint(1001, "A1", "Vin", 39.5, now)},
+        by_system={1001: {"A1": {"Vin": ModulePoint(1001, "A1", "Vin", 39.5, now)}}},
+        freshness=FreshnessState(
+            latest_stable_timestamp=now,
+            fetched_at=now,
+            lag_seconds=0.0,
+            is_stale=False,
+        ),
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-array-missing")
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+    lag_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_1",
+        description=_array_metric("array_telemetry_lag_minutes"),
+    )
+    timestamp_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_1",
+        description=_array_metric("array_latest_stable_panel_data_timestamp"),
+    )
+
+    assert timestamp_sensor.native_value is None
+    assert lag_sensor.native_value is None
+    attrs = lag_sensor.extra_state_attributes
+    assert attrs["array_telemetry_lag_status"] == "unknown"
+    assert attrs["array_latest_source_checkin"] is None
+    assert attrs["array_latest_non_empty_panel_timestamp"] is None
+    assert attrs["array_panel_data_age_seconds"] is None
+    assert attrs["array_panel_data_is_stale"] is True
+
+
+async def test_array_lag_sensor_marks_stale_and_critical_for_old_pin(hass):
+    """Array lag attributes should reflect old Pin timestamp age and lag status."""
+    fetched_at = datetime(2026, 3, 2, 14, 0, tzinfo=UTC)
+    old_pin = fetched_at - timedelta(minutes=50)
+    source_checkin = fetched_at
+
+    summary_snapshot = SummarySnapshot(
+        account_id="42",
+        systems={
+            1001: SystemSnapshot(
+                system_id=1001,
+                name="Site One",
+                timezone="UTC",
+                address=None,
+                latitude=None,
+                longitude=None,
+                turn_on_date="2025-08-24",
+                power_rating=5000.0,
+                summary={"last_power_dc": 1200},
+                sources=[],
+                freshest_timestamp=source_checkin,
+                system_data_age_seconds=60.0,
+                system_data_is_stale=False,
+                latest_source_checkin=source_checkin,
+                latest_non_empty_telemetry_timestamp=old_pin,
+                heartbeat_age_seconds=60.0,
+                telemetry_lag_seconds=3000.0,
+                telemetry_lag_status="critical",
+                alert_state=_default_alert_state(),
+                module_label_map={},
+                arrays={
+                    "string_1": ArraySnapshot(
+                        array_id="string_1",
+                        name="Array A",
+                        short_label="A",
+                        string_id=1,
+                        mppt_label="MPPT 1",
+                        inverter_label="Inverter 1",
+                        panel_labels=("A1",),
+                    )
+                },
+                module_array_map={"A1": "string_1"},
+            )
+        },
+        freshness=FreshnessState(
+            latest_stable_timestamp=source_checkin,
+            fetched_at=fetched_at,
+            lag_seconds=60.0,
+            is_stale=False,
+        ),
+    )
+    module_snapshot = ModuleSnapshot(
+        points_by_key={(1001, "A1", "Pin"): ModulePoint(1001, "A1", "Pin", 120.0, old_pin)},
+        by_system={1001: {"A1": {"Pin": ModulePoint(1001, "A1", "Pin", 120.0, old_pin)}}},
+        freshness=FreshnessState(
+            latest_stable_timestamp=old_pin,
+            fetched_at=fetched_at,
+            lag_seconds=3000.0,
+            is_stale=True,
+        ),
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Tigo", data={}, entry_id="entry-array-old")
+    entry.add_to_hass(hass)
+
+    summary_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="summary",
+        update_method=None,
+    )
+    summary_coordinator.data = summary_snapshot
+    module_coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=entry,
+        name="modules",
+        update_method=None,
+    )
+    module_coordinator.data = module_snapshot
+
+    runtime = TigoRuntimeData(
+        account_id="42",
+        entry_mode="single_system",
+        summary_coordinator=summary_coordinator,
+        module_coordinator=module_coordinator,
+        tracked_system_ids={1001},
+    )
+    lag_sensor = TigoArraySensor(
+        entry=entry,
+        runtime=runtime,
+        system_id=1001,
+        array_id="string_1",
+        description=_array_metric("array_telemetry_lag_minutes"),
+    )
+
+    assert lag_sensor.native_value == 50.0
+    attrs = lag_sensor.extra_state_attributes
+    assert attrs["array_telemetry_lag_status"] == "critical"
+    assert attrs["array_panel_data_age_seconds"] == 3000.0
+    assert attrs["array_panel_data_is_stale"] is True
 
 
 async def test_module_discovery_still_creates_system_entities(hass):

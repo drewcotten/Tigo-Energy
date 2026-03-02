@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -26,6 +27,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_ALERTS_SUPPORTED,
+    ATTR_ARRAY_LAG_BASIS,
+    ATTR_ARRAY_LAG_CRITICAL_MINUTES,
+    ATTR_ARRAY_LAG_WARNING_MINUTES,
+    ATTR_ARRAY_LATEST_NON_EMPTY_PANEL_TIMESTAMP,
+    ATTR_ARRAY_LATEST_SOURCE_CHECKIN,
+    ATTR_ARRAY_PANEL_DATA_AGE_SECONDS,
+    ATTR_ARRAY_PANEL_DATA_IS_STALE,
+    ATTR_ARRAY_TELEMETRY_LAG_STATUS,
     ATTR_DATA_LAG_SECONDS,
     ATTR_IS_STALE,
     ATTR_LAG_CRITICAL_MINUTES,
@@ -323,6 +332,19 @@ ARRAY_METRICS: tuple[SensorEntityDescription, ...] = (
         key="array_reporting_coverage",
         translation_key="array_reporting_coverage",
         native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_latest_stable_panel_data_timestamp",
+        translation_key="array_latest_stable_panel_data_timestamp",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="array_telemetry_lag_minutes",
+        translation_key="array_telemetry_lag_minutes",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
@@ -915,6 +937,10 @@ class TigoArraySensor(TigoBaseEntity):
         if array is None:
             return None
 
+        latest_pin_timestamp = self._latest_panel_pin_timestamp(array)
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        telemetry_lag_seconds = _array_telemetry_lag_seconds(system, latest_pin_timestamp)
+
         pin_values = self._metric_values(array, "Pin")
         vin_values = self._metric_values(array, "Vin")
         iin_values = self._metric_values(array, "Iin")
@@ -956,6 +982,10 @@ class TigoArraySensor(TigoBaseEntity):
             if module_count == 0:
                 return None
             return round((reporting_module_count / module_count) * 100, 1)
+        if key == "array_latest_stable_panel_data_timestamp":
+            return latest_pin_timestamp
+        if key == "array_telemetry_lag_minutes":
+            return _seconds_to_minutes(telemetry_lag_seconds)
 
         return None
 
@@ -963,6 +993,11 @@ class TigoArraySensor(TigoBaseEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs = super().extra_state_attributes
         array = self._array
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        module_freshness = (
+            self._runtime.module_coordinator.data.freshness if self._runtime.module_coordinator else None
+        )
+        stale_threshold_seconds = _stale_threshold_seconds_from_entry(self._entry)
         if array is None:
             attrs.update(
                 {
@@ -973,11 +1008,33 @@ class TigoArraySensor(TigoBaseEntity):
                     "array_panel_labels": [],
                     "array_module_count": 0,
                     "array_reporting_module_count": 0,
+                    ATTR_ARRAY_PANEL_DATA_AGE_SECONDS: None,
+                    ATTR_ARRAY_PANEL_DATA_IS_STALE: True,
+                    ATTR_ARRAY_TELEMETRY_LAG_STATUS: "unknown",
+                    ATTR_ARRAY_LAG_WARNING_MINUTES: LAG_WARNING_MINUTES,
+                    ATTR_ARRAY_LAG_CRITICAL_MINUTES: LAG_CRITICAL_MINUTES,
+                    ATTR_ARRAY_LATEST_SOURCE_CHECKIN: (
+                        system.latest_source_checkin if system else None
+                    ),
+                    ATTR_ARRAY_LATEST_NON_EMPTY_PANEL_TIMESTAMP: None,
+                    ATTR_ARRAY_LAG_BASIS: "Pin",
                 }
             )
             return attrs
 
         reporting_count = self._reporting_module_count(array)
+        latest_pin_timestamp = self._latest_panel_pin_timestamp(array)
+        array_panel_data_age_seconds = (
+            max(0.0, (module_freshness.fetched_at - latest_pin_timestamp).total_seconds())
+            if module_freshness and latest_pin_timestamp
+            else None
+        )
+        array_panel_data_is_stale = (
+            array_panel_data_age_seconds is None
+            or array_panel_data_age_seconds > stale_threshold_seconds
+        )
+        telemetry_lag_seconds = _array_telemetry_lag_seconds(system, latest_pin_timestamp)
+        array_telemetry_lag_status = _lag_status_for_seconds(telemetry_lag_seconds)
         attrs.update(
             {
                 "array_id": array.array_id,
@@ -994,9 +1051,34 @@ class TigoArraySensor(TigoBaseEntity):
                     system_id=self._system_id,
                     panel_labels=array.panel_labels,
                 ),
+                ATTR_ARRAY_PANEL_DATA_AGE_SECONDS: array_panel_data_age_seconds,
+                ATTR_ARRAY_PANEL_DATA_IS_STALE: array_panel_data_is_stale,
+                ATTR_ARRAY_TELEMETRY_LAG_STATUS: array_telemetry_lag_status,
+                ATTR_ARRAY_LAG_WARNING_MINUTES: LAG_WARNING_MINUTES,
+                ATTR_ARRAY_LAG_CRITICAL_MINUTES: LAG_CRITICAL_MINUTES,
+                ATTR_ARRAY_LATEST_SOURCE_CHECKIN: (
+                    system.latest_source_checkin if system else None
+                ),
+                ATTR_ARRAY_LATEST_NON_EMPTY_PANEL_TIMESTAMP: latest_pin_timestamp,
+                ATTR_ARRAY_LAG_BASIS: "Pin",
             }
         )
         return attrs
+
+    def _latest_panel_pin_timestamp(self, array: ArraySnapshot) -> datetime | None:
+        """Return latest non-empty Pin timestamp for one array."""
+        if self._runtime.module_coordinator is None:
+            return None
+        modules = self._runtime.module_coordinator.data.by_system.get(self._system_id, {})
+        timestamps: list[datetime] = []
+        for panel_label in array.panel_labels:
+            point = modules.get(panel_label, {}).get("Pin")
+            if point is None:
+                continue
+            timestamps.append(point.timestamp)
+        if not timestamps:
+            return None
+        return max(timestamps)
 
     def _metric_values(self, array: ArraySnapshot, metric: str) -> list[float]:
         """Return metric values for modules that belong to this array."""
@@ -1258,6 +1340,30 @@ def _seconds_to_minutes(value: float | None) -> float | None:
     if value is None:
         return None
     return round(value / 60, 1)
+
+
+def _lag_status_for_seconds(value: float | None) -> str:
+    """Return lag status bucket for one lag value in seconds."""
+    if value is None:
+        return "unknown"
+    lag_minutes = value / 60
+    if lag_minutes >= LAG_CRITICAL_MINUTES:
+        return "critical"
+    if lag_minutes >= LAG_WARNING_MINUTES:
+        return "warning"
+    return "ok"
+
+
+def _array_telemetry_lag_seconds(
+    system: SystemSnapshot | None,
+    latest_panel_timestamp: datetime | None,
+) -> float | None:
+    """Return array telemetry lag in seconds from latest source check-in to latest panel Pin."""
+    if system is None:
+        return None
+    if system.latest_source_checkin is None or latest_panel_timestamp is None:
+        return None
+    return max(0.0, (system.latest_source_checkin - latest_panel_timestamp).total_seconds())
 
 
 def _mean_or_none(values: list[float], *, precision: int) -> float | None:
