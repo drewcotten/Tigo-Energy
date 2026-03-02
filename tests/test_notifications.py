@@ -104,3 +104,47 @@ async def test_telemetry_lag_notification_create_and_clear(hass):
 
     mock_create.assert_called_once()
     mock_dismiss.assert_called_once()
+
+
+async def test_alert_feed_notifications_create_and_clear(hass):
+    """PV-Off/string-shutdown/active-alert notifications should create and clear."""
+    notifier = TigoConnectionNotifier(hass, "entry-1", "Tigo Energy")
+
+    with (
+        patch(
+            "custom_components.tigo_energy.notifications.persistent_notification.async_create"
+        ) as mock_create,
+        patch(
+            "custom_components.tigo_energy.notifications.persistent_notification.async_dismiss"
+        ) as mock_dismiss,
+    ):
+        await notifier.async_report_pv_off_active(system_names=["Site One"], system_count=1)
+        await notifier.async_report_string_shutdown_active(
+            system_names=["Site One", "Site Two"],
+            system_count=2,
+        )
+        await notifier.async_report_active_alerts(
+            total_active_alerts=3,
+            affected_system_count=2,
+            latest_alert_title="Tigo Alert",
+            latest_alert_code=42,
+            latest_alert_time="2026-03-01T19:00:00+00:00",
+        )
+        await notifier.async_clear_pv_off_alert()
+        await notifier.async_clear_string_shutdown_alert()
+        await notifier.async_clear_active_alerts()
+
+    assert mock_create.call_count == 3
+    assert mock_dismiss.call_count == 3
+
+
+async def test_notifier_async_clear_dismisses_all_ids(hass):
+    """Global clear should dismiss connection + RSSI + lag + alert-feed IDs."""
+    notifier = TigoConnectionNotifier(hass, "entry-1", "Tigo Energy")
+
+    with patch(
+        "custom_components.tigo_energy.notifications.persistent_notification.async_dismiss"
+    ) as mock_dismiss:
+        await notifier.async_clear()
+
+    assert mock_dismiss.call_count == 6

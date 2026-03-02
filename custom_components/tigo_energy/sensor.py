@@ -36,15 +36,22 @@ from .const import (
     ATTR_LATEST_ALERT_MESSAGE,
     ATTR_LATEST_ALERT_UNIQUE_ID,
     ATTR_LATEST_NON_EMPTY_TELEMETRY_TIMESTAMP,
+    ATTR_LATEST_POSITIVE_TELEMETRY_TIMESTAMP,
     ATTR_LATEST_SOURCE_CHECKIN,
     ATTR_LATEST_STABLE_TIMESTAMP,
     ATTR_MODULE_DATA_AGE_SECONDS,
     ATTR_MODULE_DATA_IS_STALE,
     ATTR_MODULE_DATA_TIMESTAMP,
+    ATTR_POSITIVE_PRODUCTION_AGE_MINUTES,
+    ATTR_SUN_ELEVATION,
+    ATTR_SUN_STATE,
     ATTR_SYSTEM_DATA_AGE_SECONDS,
     ATTR_SYSTEM_DATA_IS_STALE,
     ATTR_SYSTEM_DATA_TIMESTAMP,
+    ATTR_TELEMETRY_LAG_GUARD_ACTIVE,
+    ATTR_TELEMETRY_LAG_GUARD_REASON,
     ATTR_TELEMETRY_LAG_STATUS,
+    ATTR_TELEMETRY_LAG_STATUS_RAW,
     DEFAULT_RSSI_ALERT_THRESHOLD,
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
@@ -579,6 +586,7 @@ class TigoBaseEntity(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         freshness = self._runtime.summary_coordinator.data.freshness
         system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        solar = system.solar_alert_context if system else None
         return {
             ATTR_LATEST_STABLE_TIMESTAMP: freshness.latest_stable_timestamp,
             ATTR_IS_STALE: freshness.is_stale,
@@ -586,6 +594,16 @@ class TigoBaseEntity(CoordinatorEntity, SensorEntity):
             ATTR_SYSTEM_DATA_TIMESTAMP: system.freshest_timestamp if system else None,
             ATTR_SYSTEM_DATA_AGE_SECONDS: system.system_data_age_seconds if system else None,
             ATTR_SYSTEM_DATA_IS_STALE: system.system_data_is_stale if system else True,
+            ATTR_LATEST_POSITIVE_TELEMETRY_TIMESTAMP: (
+                system.latest_positive_telemetry_timestamp if system else None
+            ),
+            ATTR_POSITIVE_PRODUCTION_AGE_MINUTES: (
+                solar.positive_production_age_minutes if solar else None
+            ),
+            ATTR_SUN_STATE: solar.sun_state if solar else None,
+            ATTR_SUN_ELEVATION: solar.sun_elevation if solar else None,
+            ATTR_TELEMETRY_LAG_GUARD_ACTIVE: solar.guard_active if solar else None,
+            ATTR_TELEMETRY_LAG_GUARD_REASON: solar.guard_reason if solar else None,
         }
 
     @property
@@ -683,6 +701,9 @@ class TigoSystemSensor(TigoBaseEntity):
             attrs.update(
                 {
                     ATTR_TELEMETRY_LAG_STATUS: system.telemetry_lag_status if system else None,
+                    ATTR_TELEMETRY_LAG_STATUS_RAW: (
+                        system.telemetry_lag_status_raw if system else None
+                    ),
                     ATTR_LAG_WARNING_MINUTES: LAG_WARNING_MINUTES,
                     ATTR_LAG_CRITICAL_MINUTES: LAG_CRITICAL_MINUTES,
                     ATTR_LATEST_SOURCE_CHECKIN: system.latest_source_checkin if system else None,

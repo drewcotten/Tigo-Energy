@@ -101,6 +101,19 @@ class ArraySnapshot:
 
 
 @dataclass(slots=True)
+class SolarAlertContext:
+    """Solar/daylight context used to gate data-quality alerts."""
+
+    sun_available: bool
+    sun_state: str
+    sun_elevation: float | None
+    guard_active: bool
+    guard_reason: str
+    latest_positive_telemetry_timestamp: datetime | None
+    positive_production_age_minutes: float | None
+
+
+@dataclass(slots=True)
 class SystemSnapshot:
     """System metadata + summary + source state."""
 
@@ -129,6 +142,9 @@ class SystemSnapshot:
     module_label_map: dict[str, str] = field(default_factory=dict)
     arrays: dict[str, ArraySnapshot] = field(default_factory=dict)
     module_array_map: dict[str, str] = field(default_factory=dict)
+    latest_positive_telemetry_timestamp: datetime | None = None
+    telemetry_lag_status_raw: str | None = None
+    solar_alert_context: SolarAlertContext | None = None
 
 
 @dataclass(slots=True)

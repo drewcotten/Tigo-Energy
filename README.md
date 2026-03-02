@@ -25,6 +25,7 @@ This integration supports native UI onboarding (Config Flow), in-flow authentica
 - Read-only alert and safety monitoring: alert sensors plus `PV-Off active` and `String shutdown active` binary sensors.
 - Lag-aware cloud handling: rolling backfill, short-window fallback retry, and freshness diagnostics (`telemetry_lag_status`, stale attributes).
 - Semantic panel labeling from Tigo object/layout labels (`A1`, `B4`, etc.) for cleaner device naming.
+- Sunset-aware notifications for lag/RSSI data-quality alerts, plus read-only alert-feed notifications (PV-Off, string-shutdown, active alerts).
 - Persistent Home Assistant notifications for connectivity, sustained low RSSI, and critical telemetry lag (auto-clear on recovery).
 
 ## Tigo API Data Time Lag
@@ -92,7 +93,8 @@ The integration setup flow is:
    - `module_poll_seconds` (default `300`)
 6. Choose whether to enable module-level telemetry (`Pin`, `Vin`, `Iin`, `RSSI`). Default is `off`.
 7. Choose whether Home Assistant should show persistent warning notifications (connection issues, sustained low RSSI, and critical telemetry lag). Default is `on`.
-8. After setup, use **Add system** on the integration page to add more system subentries under the same account entry.
+8. Choose whether to enable sunset-aware guard for RSSI/telemetry-lag alerting and read-only alert-feed notifications (PV-Off + active alerts). Defaults are `on`.
+9. After setup, use **Add system** on the integration page to add more system subentries under the same account entry.
 
 Tigo API documentation/terms expose rate limiting via `X-Rate-Limit-*` headers and document a per-account cap (`100` requests/minute). Use conservative poll intervals, especially for multi-system accounts.
 
@@ -107,6 +109,10 @@ All options are configurable in **Settings > Devices & Services > Tigo Energy > 
 - `module_poll_seconds` (default `300`)
 - `enable_module_telemetry` (default `false`, also selectable during onboarding)
 - `enable_persistent_notifications` (default `true`, also selectable during onboarding)
+- `enable_sunset_alert_guard` (default `true`)
+- `sun_guard_min_elevation_degrees` (default `3.0`)
+- `sun_guard_positive_power_grace_minutes` (default `90`)
+- `enable_alert_feed_notifications` (default `true`)
 - `stale_threshold_seconds` (default `1800`)
 - `backfill_window_minutes` (default `120`)
 - `recent_cutoff_minutes` (default `0`)
@@ -201,11 +207,18 @@ RSSI module entities expose additional attributes for easier automation/filterin
 
 Telemetry lag and heartbeat age entities expose additional attributes for lag diagnostics:
 
-- `telemetry_lag_status` (`ok`, `warning`, `critical`)
+- `telemetry_lag_status` (effective status: `ok`, `warning`, `critical`, `suppressed_night`)
+- `telemetry_lag_status_raw` (raw threshold status before sunset guard)
 - `lag_warning_minutes` (default `20`)
 - `lag_critical_minutes` (default `45`)
 - `latest_source_checkin`
 - `latest_non_empty_telemetry_timestamp`
+- `telemetry_lag_guard_active`
+- `telemetry_lag_guard_reason`
+- `sun_state`
+- `sun_elevation`
+- `latest_positive_telemetry_timestamp`
+- `positive_production_age_minutes`
 
 ### Alert Attributes
 
@@ -252,6 +265,17 @@ Timestamp handling rules:
 - ISO timestamps with offsets are normalized to UTC internally.
 - Date-only fields (for example `turn_on_date`) are treated as metadata dates, not freshness instants.
 - CSV `Datetime` values without offsets are interpreted as site-local bucket times (`system timezone -> Home Assistant timezone -> UTC`).
+
+## Sunset-Aware Alerting
+
+The integration can suppress data-quality alert escalation at night while keeping telemetry visible:
+
+- Lag status is computed in two forms:
+  - Raw (`telemetry_lag_status_raw`) from fixed thresholds.
+  - Effective (`telemetry_lag_status`) which can become `suppressed_night` when sunset guard is active.
+- Low-RSSI and telemetry-lag persistent notifications honor sunset guard context.
+- Connectivity/auth/API failure notifications are never sunset-suppressed.
+- PV-Off, string-shutdown, and active-alert summary notifications are read-only alert-feed signals and are not sunset-suppressed.
 
 ## Troubleshooting
 

@@ -16,7 +16,10 @@ from custom_components.tigo_energy.api import (
     TigoApiRateLimitError,
 )
 from custom_components.tigo_energy.const import (
+    DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     ENTRY_MODE_SINGLE_SYSTEM,
+    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
     OPT_RSSI_ALERT_THRESHOLD,
     OPT_RSSI_WATCH_THRESHOLD,
@@ -179,6 +182,152 @@ async def test_summary_coordinator_critical_lag_notifies_after_debounce(hass):
 
     await coordinator.async_refresh()
     notifier.async_report_telemetry_lag_critical.assert_awaited_once()
+
+
+async def test_summary_coordinator_suppresses_lag_status_at_night(hass):
+    """Critical raw lag should be suppressed at night with no recent production."""
+    now = datetime.now(UTC)
+    telemetry = now - timedelta(minutes=50)
+    hass.states.async_set("sun.sun", "below_horizon", {"elevation": -12.0})
+
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.return_value = [{"system_id": 1001, "name": "Site One"}]
+    mock_client.async_get_system.return_value = {"name": "Site One", "timezone": "UTC"}
+    mock_client.async_get_summary.return_value = {"last_power_dc": 0, "updated_on": now.isoformat()}
+    mock_client.async_get_sources.return_value = [
+        {"source_id": "src-1", "name": "CCA", "last_checkin": now.isoformat()}
+    ]
+    mock_client.async_get_combined_csv.return_value = (
+        "Datetime,combined\n"
+        f"{telemetry.strftime('%Y/%m/%d %H:%M:%S')},0\n"
+    )
+    _configure_summary_enrichment_calls(mock_client)
+
+    notifier = AsyncMock()
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={OPT_ENABLE_SUNSET_ALERT_GUARD: True},
+        connection_notifier=notifier,
+    )
+
+    await coordinator.async_refresh()
+    system = coordinator.data.systems[1001]
+    assert system.telemetry_lag_status_raw == "critical"
+    assert system.telemetry_lag_status == "suppressed_night"
+    notifier.async_report_telemetry_lag_critical.assert_not_called()
+
+
+async def test_summary_coordinator_alert_feed_notifications(hass):
+    """Alert-feed notifications should route PV-Off, shutdown, and active counts."""
+    now = datetime.now(UTC)
+    telemetry = now - timedelta(minutes=5)
+
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.return_value = [{"system_id": 1001, "name": "Site One"}]
+    mock_client.async_get_system.return_value = {"name": "Site One", "timezone": "UTC"}
+    mock_client.async_get_summary.return_value = {"last_power_dc": 800, "updated_on": now.isoformat()}
+    mock_client.async_get_sources.return_value = [
+        {"source_id": "src-1", "name": "CCA", "last_checkin": now.isoformat(), "control_state": "on"}
+    ]
+    mock_client.async_get_combined_csv.return_value = (
+        "Datetime,combined\n"
+        f"{telemetry.strftime('%Y/%m/%d %H:%M:%S')},350\n"
+    )
+    mock_client.async_get_alert_types.return_value = [
+        {"unique_id": 42, "title": "Tigo Alert: PV-Off Activated — System Shutdown"}
+    ]
+    mock_client.async_get_alerts_system.return_value = (
+        [
+            {
+                "alert_id": 1,
+                "unique_id": 42,
+                "title": "Tigo Alert: PV-Off Activated — System Shutdown",
+                "message": "String shutdown",
+                "description": "<p>desc</p>",
+                "generated": now.isoformat(),
+                "added": now.isoformat(),
+                "archived": False,
+            }
+        ],
+        {"totalCount": 1},
+    )
+    mock_client.async_get_objects_system.return_value = []
+    mock_client.async_get_system_layout.return_value = {}
+    mock_client.async_get_system_full.return_value = {}
+
+    notifier = AsyncMock()
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: True},
+        connection_notifier=notifier,
+    )
+
+    await coordinator.async_refresh()
+    notifier.async_report_pv_off_active.assert_awaited_once()
+    notifier.async_report_string_shutdown_active.assert_awaited_once()
+    notifier.async_report_active_alerts.assert_awaited_once()
+
+
+async def test_summary_coordinator_alert_feed_notifications_disabled(hass):
+    """Alert-feed notifications should clear and stay disabled when option is off."""
+    now = datetime.now(UTC)
+    telemetry = now - timedelta(minutes=5)
+
+    mock_client = AsyncMock()
+    mock_client.account_id = "42"
+    mock_client.async_list_systems.return_value = [{"system_id": 1001, "name": "Site One"}]
+    mock_client.async_get_system.return_value = {"name": "Site One", "timezone": "UTC"}
+    mock_client.async_get_summary.return_value = {"last_power_dc": 800, "updated_on": now.isoformat()}
+    mock_client.async_get_sources.return_value = [
+        {"source_id": "src-1", "name": "CCA", "last_checkin": now.isoformat(), "control_state": "off"}
+    ]
+    mock_client.async_get_combined_csv.return_value = (
+        "Datetime,combined\n"
+        f"{telemetry.strftime('%Y/%m/%d %H:%M:%S')},350\n"
+    )
+    mock_client.async_get_alert_types.return_value = []
+    mock_client.async_get_alerts_system.return_value = (
+        [
+            {
+                "alert_id": 1,
+                "unique_id": 42,
+                "title": "Tigo Alert: PV-Off Activated",
+                "generated": now.isoformat(),
+                "added": now.isoformat(),
+                "archived": False,
+            }
+        ],
+        {"totalCount": 1},
+    )
+    mock_client.async_get_objects_system.return_value = []
+    mock_client.async_get_system_layout.return_value = {}
+    mock_client.async_get_system_full.return_value = {}
+
+    notifier = AsyncMock()
+    coordinator = TigoSummaryCoordinator(
+        hass=hass,
+        client=mock_client,
+        entry_mode=ENTRY_MODE_SINGLE_SYSTEM,
+        configured_system_ids={1001},
+        options={OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: False},
+        connection_notifier=notifier,
+    )
+
+    await coordinator.async_refresh()
+    notifier.async_report_pv_off_active.assert_not_called()
+    notifier.async_report_string_shutdown_active.assert_not_called()
+    notifier.async_report_active_alerts.assert_not_called()
+    notifier.async_clear_pv_off_alert.assert_awaited_once()
+    notifier.async_clear_string_shutdown_alert.assert_awaited_once()
+    notifier.async_clear_active_alerts.assert_awaited_once()
 
 
 async def test_summary_coordinator_alert_state_computation(hass):
@@ -612,4 +761,43 @@ async def test_module_coordinator_low_rssi_alert_debounced(hass):
     state["ts"] = now + timedelta(minutes=1)
     await coordinator.async_refresh()
     assert coordinator.data.low_rssi_module_count == 0
+    notifier.async_clear_low_rssi_alert.assert_awaited_once()
+
+
+async def test_module_coordinator_low_rssi_suppressed_when_guard_inactive(hass):
+    """Low RSSI notifications should be suppressed when sunset guard is inactive."""
+    now = datetime.now(UTC)
+
+    def side_effect(*args, **kwargs):
+        metric = kwargs["metric"]
+        value = 70.0 if metric == "RSSI" else 100.0
+        return f"Datetime,mod1\n{now.strftime('%Y/%m/%d %H:%M:%S')},{value}\n"
+
+    mock_client = AsyncMock()
+    mock_client.async_get_aggregate_csv.side_effect = side_effect
+
+    summary = DummySummary()
+    summary.data.systems[1001] = SimpleNamespace(
+        timezone="UTC",
+        module_label_map={},
+        solar_alert_context=SimpleNamespace(guard_active=False),
+    )
+
+    notifier = AsyncMock()
+    coordinator = TigoModuleCoordinator(
+        hass=hass,
+        client=mock_client,
+        summary_coordinator=summary,
+        options={
+            OPT_RSSI_WATCH_THRESHOLD: 120,
+            OPT_RSSI_ALERT_THRESHOLD: 80,
+            OPT_RSSI_ALERT_CONSECUTIVE_POLLS: 1,
+            OPT_ENABLE_SUNSET_ALERT_GUARD: DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
+        },
+        connection_notifier=notifier,
+    )
+
+    await coordinator.async_refresh()
+    assert coordinator.data.low_rssi_module_count == 1
+    notifier.async_report_low_rssi_alert.assert_not_called()
     notifier.async_clear_low_rssi_alert.assert_awaited_once()

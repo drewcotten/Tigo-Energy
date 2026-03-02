@@ -18,8 +18,10 @@ from .const import (
     CONF_ENTRY_MODE,
     CONF_SYSTEM_ID,
     DEFAULT_BACKFILL_WINDOW_MINUTES,
+    DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     DEFAULT_ENABLE_MODULE_TELEMETRY,
     DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+    DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -27,6 +29,8 @@ from .const import (
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
+    DEFAULT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    DEFAULT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     DOMAIN,
     ENTRY_MODE_ALL_SYSTEMS,
     ENTRY_MODE_SINGLE_SYSTEM,
@@ -36,6 +40,8 @@ from .const import (
     MAX_RSSI_ALERT_CONSECUTIVE_POLLS,
     MAX_RSSI_THRESHOLD,
     MAX_STALE_THRESHOLD_SECONDS,
+    MAX_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    MAX_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     MIN_BACKFILL_WINDOW_MINUTES,
     MIN_MODULE_POLL_SECONDS,
     MIN_RECENT_CUTOFF_MINUTES,
@@ -43,9 +49,13 @@ from .const import (
     MIN_RSSI_THRESHOLD,
     MIN_STALE_THRESHOLD_SECONDS,
     MIN_SUMMARY_POLL_SECONDS,
+    MIN_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    MIN_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     OPT_BACKFILL_WINDOW_MINUTES,
+    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     OPT_ENABLE_MODULE_TELEMETRY,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+    OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -53,6 +63,8 @@ from .const import (
     OPT_RSSI_WATCH_THRESHOLD,
     OPT_STALE_THRESHOLD_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
+    OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     SUBENTRY_TYPE_SYSTEM,
 )
 
@@ -77,6 +89,23 @@ def _int_box_selector(min_value: int, max_value: int) -> selector.NumberSelector
     )
 
 
+def _float_box_selector(
+    min_value: float,
+    max_value: float,
+    *,
+    step: float = 0.1,
+) -> selector.NumberSelector:
+    """Build a float number selector rendered as a keyboard-editable box."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=min_value,
+            max=max_value,
+            step=step,
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
+
+
 class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Tigo Energy."""
 
@@ -91,6 +120,12 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_system_id: int | None = None
         self._enable_module_telemetry: bool = DEFAULT_ENABLE_MODULE_TELEMETRY
         self._enable_persistent_notifications: bool = DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS
+        self._enable_sunset_alert_guard: bool = DEFAULT_ENABLE_SUNSET_ALERT_GUARD
+        self._sun_guard_min_elevation_degrees: float = DEFAULT_SUN_GUARD_MIN_ELEVATION_DEGREES
+        self._sun_guard_positive_power_grace_minutes: int = (
+            DEFAULT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES
+        )
+        self._enable_alert_feed_notifications: bool = DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS
         self._summary_poll_seconds: int = DEFAULT_SUMMARY_POLL_SECONDS
         self._module_poll_seconds: int = DEFAULT_MODULE_POLL_SECONDS
         self._reauth_entry: config_entries.ConfigEntry | None = None
@@ -204,6 +239,16 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._enable_persistent_notifications = bool(
                 user_input[OPT_ENABLE_PERSISTENT_NOTIFICATIONS]
             )
+            self._enable_sunset_alert_guard = bool(user_input[OPT_ENABLE_SUNSET_ALERT_GUARD])
+            self._sun_guard_min_elevation_degrees = float(
+                user_input[OPT_SUN_GUARD_MIN_ELEVATION_DEGREES]
+            )
+            self._sun_guard_positive_power_grace_minutes = int(
+                user_input[OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES]
+            )
+            self._enable_alert_feed_notifications = bool(
+                user_input[OPT_ENABLE_ALERT_FEED_NOTIFICATIONS]
+            )
             self._summary_poll_seconds = int(user_input[OPT_SUMMARY_POLL_SECONDS])
             self._module_poll_seconds = int(user_input[OPT_MODULE_POLL_SECONDS])
 
@@ -236,6 +281,12 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     OPT_MODULE_POLL_SECONDS: self._module_poll_seconds,
                     OPT_ENABLE_MODULE_TELEMETRY: self._enable_module_telemetry,
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS: self._enable_persistent_notifications,
+                    OPT_ENABLE_SUNSET_ALERT_GUARD: self._enable_sunset_alert_guard,
+                    OPT_SUN_GUARD_MIN_ELEVATION_DEGREES: self._sun_guard_min_elevation_degrees,
+                    OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES: (
+                        self._sun_guard_positive_power_grace_minutes
+                    ),
+                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: self._enable_alert_feed_notifications,
                 },
             )
 
@@ -256,6 +307,28 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
                     default=self._enable_persistent_notifications,
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_SUNSET_ALERT_GUARD,
+                    default=self._enable_sunset_alert_guard,
+                ): bool,
+                vol.Required(
+                    OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                    default=self._sun_guard_min_elevation_degrees,
+                ): _float_box_selector(
+                    MIN_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                    MAX_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                ),
+                vol.Required(
+                    OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                    default=self._sun_guard_positive_power_grace_minutes,
+                ): _int_box_selector(
+                    MIN_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                    MAX_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                ),
+                vol.Required(
+                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+                    default=self._enable_alert_feed_notifications,
                 ): bool,
             }
         )
@@ -454,6 +527,12 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                 OPT_STALE_THRESHOLD_SECONDS: int(user_input[OPT_STALE_THRESHOLD_SECONDS]),
                 OPT_BACKFILL_WINDOW_MINUTES: int(user_input[OPT_BACKFILL_WINDOW_MINUTES]),
                 OPT_RECENT_CUTOFF_MINUTES: int(user_input[OPT_RECENT_CUTOFF_MINUTES]),
+                OPT_SUN_GUARD_MIN_ELEVATION_DEGREES: float(
+                    user_input[OPT_SUN_GUARD_MIN_ELEVATION_DEGREES]
+                ),
+                OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES: int(
+                    user_input[OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES]
+                ),
                 OPT_RSSI_WATCH_THRESHOLD: int(user_input[OPT_RSSI_WATCH_THRESHOLD]),
                 OPT_RSSI_ALERT_THRESHOLD: int(user_input[OPT_RSSI_ALERT_THRESHOLD]),
                 OPT_RSSI_ALERT_CONSECUTIVE_POLLS: int(user_input[OPT_RSSI_ALERT_CONSECUTIVE_POLLS]),
@@ -488,6 +567,48 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
                         options.get(
                             OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
                             DEFAULT_ENABLE_PERSISTENT_NOTIFICATIONS,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_SUNSET_ALERT_GUARD,
+                    default=bool(
+                        options.get(
+                            OPT_ENABLE_SUNSET_ALERT_GUARD,
+                            DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
+                        )
+                    ),
+                ): bool,
+                vol.Required(
+                    OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                    default=float(
+                        options.get(
+                            OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                            DEFAULT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                        )
+                    ),
+                ): _float_box_selector(
+                    MIN_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                    MAX_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                ),
+                vol.Required(
+                    OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                    default=int(
+                        options.get(
+                            OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                            DEFAULT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                        )
+                    ),
+                ): _int_box_selector(
+                    MIN_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                    MAX_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                ),
+                vol.Required(
+                    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+                    default=bool(
+                        options.get(
+                            OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+                            DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
                         )
                     ),
                 ): bool,

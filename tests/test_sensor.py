@@ -16,6 +16,7 @@ from custom_components.tigo_energy.models import (
     FreshnessState,
     ModulePoint,
     ModuleSnapshot,
+    SolarAlertContext,
     SummarySnapshot,
     SystemAlertState,
     SystemSnapshot,
@@ -77,10 +78,21 @@ async def test_telemetry_lag_sensor_exposes_status_attributes(hass):
                 system_data_is_stale=False,
                 latest_source_checkin=source_checkin,
                 latest_non_empty_telemetry_timestamp=latest_telemetry,
+                latest_positive_telemetry_timestamp=latest_telemetry,
                 heartbeat_age_seconds=60.0,
                 telemetry_lag_seconds=3000.0,
-                telemetry_lag_status="critical",
+                telemetry_lag_status="suppressed_night",
+                telemetry_lag_status_raw="critical",
                 alert_state=_default_alert_state(),
+                solar_alert_context=SolarAlertContext(
+                    sun_available=True,
+                    sun_state="below_horizon",
+                    sun_elevation=-7.0,
+                    guard_active=False,
+                    guard_reason="night_no_recent_production",
+                    latest_positive_telemetry_timestamp=latest_telemetry,
+                    positive_production_age_minutes=70.0,
+                ),
                 module_label_map={},
             )
         },
@@ -121,11 +133,18 @@ async def test_telemetry_lag_sensor_exposes_status_attributes(hass):
 
     assert sensor.native_value == 50.0
     attrs = sensor.extra_state_attributes
-    assert attrs["telemetry_lag_status"] == "critical"
+    assert attrs["telemetry_lag_status"] == "suppressed_night"
+    assert attrs["telemetry_lag_status_raw"] == "critical"
     assert attrs["lag_warning_minutes"] == 20
     assert attrs["lag_critical_minutes"] == 45
     assert attrs["latest_source_checkin"] == source_checkin
     assert attrs["latest_non_empty_telemetry_timestamp"] == latest_telemetry
+    assert attrs["latest_positive_telemetry_timestamp"] == latest_telemetry
+    assert attrs["telemetry_lag_guard_active"] is False
+    assert attrs["telemetry_lag_guard_reason"] == "night_no_recent_production"
+    assert attrs["sun_state"] == "below_horizon"
+    assert attrs["sun_elevation"] == -7.0
+    assert attrs["positive_production_age_minutes"] == 70.0
     assert attrs["system_data_timestamp"] == source_checkin
     assert attrs["system_data_age_seconds"] == 60.0
     assert attrs["system_data_is_stale"] is False

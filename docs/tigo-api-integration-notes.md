@@ -39,6 +39,8 @@ Status in this integration as of the read-only alert/system expansion pass:
 - implemented: stale/freshness is surfaced as diagnostics attributes (`system_data_*`, `module_data_*`) while expected cloud lag keeps entities available when coordinator updates are healthy.
 - implemented: read-only alert ingestion (`/alerts/system`) with system-level alert entities and shutdown/PV-Off binary sensors.
 - implemented: module label canonicalization from `/objects/system` labels (`A1`, `B4`, etc.), with `/system/layout` panel-label fallback and registry migration from raw numeric module IDs when available.
+- implemented: sunset-aware alert policy for data-quality notifications (lag/RSSI) using `sun.sun` + recent positive production fallback, with raw vs effective lag status (`telemetry_lag_status_raw` and `telemetry_lag_status`).
+- implemented: read-only alert-feed persistent notifications for PV-Off, string shutdown, and active alert summary (auto-clearing on recovery).
 
 ## Key Behavioral Quirks
 

@@ -25,6 +25,8 @@ from .api import (
 )
 from .const import (
     DEFAULT_BACKFILL_WINDOW_MINUTES,
+    DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
     DEFAULT_MODULE_POLL_SECONDS,
     DEFAULT_RECENT_CUTOFF_MINUTES,
     DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -32,6 +34,8 @@ from .const import (
     DEFAULT_RSSI_WATCH_THRESHOLD,
     DEFAULT_STALE_THRESHOLD_SECONDS,
     DEFAULT_SUMMARY_POLL_SECONDS,
+    DEFAULT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    DEFAULT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     EMPTY_WINDOW_FALLBACK_MINUTES_MAX,
     EMPTY_WINDOW_FALLBACK_MINUTES_MIN,
     ENTRY_MODE_ALL_SYSTEMS,
@@ -40,6 +44,8 @@ from .const import (
     LAG_WARNING_MINUTES,
     MAX_FUTURE_BUCKET_MINUTES,
     OPT_BACKFILL_WINDOW_MINUTES,
+    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+    OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
     OPT_RECENT_CUTOFF_MINUTES,
     OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
@@ -47,6 +53,8 @@ from .const import (
     OPT_RSSI_WATCH_THRESHOLD,
     OPT_STALE_THRESHOLD_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
+    OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
 )
 from .models import (
     AlertRecord,
@@ -54,6 +62,7 @@ from .models import (
     FreshnessState,
     ModulePoint,
     ModuleSnapshot,
+    SolarAlertContext,
     SourceSnapshot,
     SummarySnapshot,
     SystemAlertState,
@@ -115,6 +124,30 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         )
         recent_cutoff_minutes = int(
             self._options.get(OPT_RECENT_CUTOFF_MINUTES, DEFAULT_RECENT_CUTOFF_MINUTES)
+        )
+        enable_sunset_alert_guard = bool(
+            self._options.get(
+                OPT_ENABLE_SUNSET_ALERT_GUARD,
+                DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
+            )
+        )
+        sun_guard_min_elevation = float(
+            self._options.get(
+                OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+                DEFAULT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+            )
+        )
+        sun_guard_positive_power_grace_minutes = int(
+            self._options.get(
+                OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+                DEFAULT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
+            )
+        )
+        enable_alert_feed_notifications = bool(
+            self._options.get(
+                OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+                DEFAULT_ENABLE_ALERT_FEED_NOTIFICATIONS,
+            )
         )
 
         try:
@@ -182,7 +215,10 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 details = await self._client.async_get_system(system_id)
                 summary = await self._client.async_get_summary(system_id)
                 sources_raw = await self._client.async_get_sources(system_id)
-                latest_non_empty_telemetry = await self._async_fetch_combined_latest_timestamp(
+                (
+                    latest_non_empty_telemetry,
+                    latest_positive_telemetry,
+                ) = await self._async_fetch_combined_latest_timestamps(
                     system_id=system_id,
                     window_start=window_start,
                     window_end=window_end,
@@ -345,7 +381,19 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                     (latest_source_checkin - latest_non_empty_telemetry).total_seconds(),
                 )
 
-            telemetry_lag_status = _telemetry_lag_status(telemetry_lag_seconds)
+            solar_alert_context = _build_solar_alert_context(
+                hass=self.hass,
+                fetched_at=fetched_for_system,
+                latest_positive_telemetry_timestamp=latest_positive_telemetry,
+                min_elevation_degrees=sun_guard_min_elevation,
+                positive_power_grace_minutes=sun_guard_positive_power_grace_minutes,
+            )
+            telemetry_lag_status_raw = _telemetry_lag_status(telemetry_lag_seconds)
+            telemetry_lag_status = _effective_telemetry_lag_status(
+                raw_status=telemetry_lag_status_raw,
+                enable_sunset_alert_guard=enable_sunset_alert_guard,
+                solar_alert_context=solar_alert_context,
+            )
             if telemetry_lag_status == "critical":
                 critical_system_count += 1
                 lag_minutes = telemetry_lag_seconds / 60 if telemetry_lag_seconds is not None else None
@@ -382,10 +430,13 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
                 system_data_is_stale=system_data_is_stale,
                 latest_source_checkin=latest_source_checkin,
                 latest_non_empty_telemetry_timestamp=latest_non_empty_telemetry,
+                latest_positive_telemetry_timestamp=latest_positive_telemetry,
                 heartbeat_age_seconds=heartbeat_age_seconds,
                 telemetry_lag_seconds=telemetry_lag_seconds,
                 telemetry_lag_status=telemetry_lag_status,
+                telemetry_lag_status_raw=telemetry_lag_status_raw,
                 alert_state=alert_state,
+                solar_alert_context=solar_alert_context,
                 system_status=_as_optional_str(details.get("status") or combined.get("status")),
                 recent_alert_count=_as_optional_int(
                     details.get("recent_alert_count") or combined.get("recent_alert_count")
@@ -414,6 +465,10 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             warning_system_count=warning_system_count,
             worst_critical_lag_minutes=worst_critical_lag_minutes,
         )
+        await self._async_handle_alert_feed_notifications(
+            systems=systems,
+            enabled=enable_alert_feed_notifications,
+        )
 
         account_id = self._client.account_id or "unknown"
         return SummarySnapshot(
@@ -427,7 +482,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             ),
         )
 
-    async def _async_fetch_combined_latest_timestamp(
+    async def _async_fetch_combined_latest_timestamps(
         self,
         *,
         system_id: int,
@@ -435,8 +490,8 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
         window_end: datetime,
         backfill_minutes: int,
         naive_tz,
-    ) -> datetime | None:
-        """Fetch latest non-empty combined telemetry timestamp for one system."""
+    ) -> tuple[datetime | None, datetime | None]:
+        """Fetch latest non-empty and latest-positive combined timestamps for one system."""
         primary_csv = await self._client.async_get_combined_csv(
             system_id=system_id,
             start=window_start,
@@ -451,7 +506,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             future_skew_minutes=MAX_FUTURE_BUCKET_MINUTES,
         )
         if _parsed_has_points(primary):
-            return _latest_timestamp(primary)
+            return _latest_timestamp(primary), _latest_positive_timestamp(primary)
 
         fallback_window_minutes = _fallback_window_minutes(backfill_minutes)
         fallback_start = window_end - timedelta(minutes=fallback_window_minutes)
@@ -469,7 +524,7 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
             future_skew_minutes=MAX_FUTURE_BUCKET_MINUTES,
         )
         filtered = _filter_parsed_to_window(fallback, window_start=window_start, window_end=window_end)
-        return _latest_timestamp(filtered)
+        return _latest_timestamp(filtered), _latest_positive_timestamp(filtered)
 
     async def _async_handle_telemetry_lag_notifications(
         self,
@@ -497,6 +552,70 @@ class TigoSummaryCoordinator(DataUpdateCoordinator[SummarySnapshot]):
 
         self._telemetry_lag_critical_poll_streak = 0
         await self._connection_notifier.async_clear_telemetry_lag_alert()
+
+    async def _async_handle_alert_feed_notifications(
+        self,
+        *,
+        systems: Mapping[int, SystemSnapshot],
+        enabled: bool,
+    ) -> None:
+        """Create/clear alert-feed persistent notifications."""
+        if self._connection_notifier is None:
+            return
+
+        if not enabled:
+            await self._connection_notifier.async_clear_pv_off_alert()
+            await self._connection_notifier.async_clear_string_shutdown_alert()
+            await self._connection_notifier.async_clear_active_alerts()
+            return
+
+        pv_off_system_names = sorted(
+            system.name for system in systems.values() if system.alert_state.pv_off_active
+        )
+        if pv_off_system_names:
+            await self._connection_notifier.async_report_pv_off_active(
+                system_names=pv_off_system_names,
+                system_count=len(pv_off_system_names),
+            )
+        else:
+            await self._connection_notifier.async_clear_pv_off_alert()
+
+        shutdown_system_names = sorted(
+            system.name for system in systems.values() if system.alert_state.string_shutdown_active
+        )
+        if shutdown_system_names:
+            await self._connection_notifier.async_report_string_shutdown_active(
+                system_names=shutdown_system_names,
+                system_count=len(shutdown_system_names),
+            )
+        else:
+            await self._connection_notifier.async_clear_string_shutdown_alert()
+
+        systems_with_alerts = [
+            system for system in systems.values() if system.alert_state.active_count > 0
+        ]
+        total_active_alerts = sum(system.alert_state.active_count for system in systems_with_alerts)
+        latest_alert = _latest_active_alert(
+            [
+                system.alert_state.latest_active_alert
+                for system in systems_with_alerts
+                if system.alert_state.latest_active_alert is not None
+            ]
+        )
+        if total_active_alerts > 0:
+            await self._connection_notifier.async_report_active_alerts(
+                total_active_alerts=total_active_alerts,
+                affected_system_count=len(systems_with_alerts),
+                latest_alert_title=latest_alert.title if latest_alert else None,
+                latest_alert_code=latest_alert.unique_id if latest_alert else None,
+                latest_alert_time=(
+                    (latest_alert.generated or latest_alert.added).isoformat()
+                    if latest_alert and (latest_alert.generated or latest_alert.added)
+                    else None
+                ),
+            )
+        else:
+            await self._connection_notifier.async_clear_active_alerts()
 
     async def _async_report_connection_failure(self) -> None:
         """Show connectivity notification when this coordinator cannot reach API."""
@@ -559,6 +678,12 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             self._options.get(
                 OPT_RSSI_ALERT_CONSECUTIVE_POLLS,
                 DEFAULT_RSSI_ALERT_CONSECUTIVE_POLLS,
+            )
+        )
+        enable_sunset_alert_guard = bool(
+            self._options.get(
+                OPT_ENABLE_SUNSET_ALERT_GUARD,
+                DEFAULT_ENABLE_SUNSET_ALERT_GUARD,
             )
         )
 
@@ -673,7 +798,19 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
             watch_threshold=rssi_watch_threshold,
             alert_threshold=rssi_alert_threshold,
         )
-        if low_rssi_count > 0:
+        low_rssi_system_ids = _low_rssi_system_ids(
+            self._points_by_key,
+            alert_threshold=rssi_alert_threshold,
+        )
+        low_rssi_guard_active = (
+            not enable_sunset_alert_guard
+            or any(
+                _system_guard_active(self._summary_coordinator.data.systems.get(system_id))
+                for system_id in low_rssi_system_ids
+            )
+        )
+
+        if low_rssi_count > 0 and low_rssi_guard_active:
             self._low_rssi_poll_streak += 1
         else:
             self._low_rssi_poll_streak = 0
@@ -682,7 +819,11 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
         lag_seconds = (fetched_at - latest_seen).total_seconds() if latest_seen else None
         is_stale = lag_seconds is None or lag_seconds > stale_threshold
         await self._async_report_connection_recovered()
-        if low_rssi_count > 0 and self._low_rssi_poll_streak >= rssi_alert_consecutive_polls:
+        if (
+            low_rssi_count > 0
+            and low_rssi_guard_active
+            and self._low_rssi_poll_streak >= rssi_alert_consecutive_polls
+        ):
             await self._async_report_low_rssi_alert(
                 low_count=low_rssi_count,
                 watch_count=watch_rssi_count,
@@ -691,7 +832,7 @@ class TigoModuleCoordinator(DataUpdateCoordinator[ModuleSnapshot]):
                 watch_threshold=rssi_watch_threshold,
                 consecutive_polls=rssi_alert_consecutive_polls,
             )
-        elif low_rssi_count == 0:
+        elif low_rssi_count == 0 or not low_rssi_guard_active:
             await self._async_clear_low_rssi_alert()
 
         return ModuleSnapshot(
@@ -989,7 +1130,7 @@ def _build_layout_mappings_from_system_full(
             string_id=string_id,
             mppt_label=mppt_label,
             inverter_label=inverter_label,
-            panel_labels=tuple(),
+            panel_labels=(),
         )
         array_panel_labels[array_id] = set()
 
@@ -1014,7 +1155,7 @@ def _build_layout_mappings_from_system_full(
                 string_id=string_id,
                 mppt_label=None,
                 inverter_label=None,
-                panel_labels=tuple(),
+                panel_labels=(),
             )
             array_panel_labels[array_id] = set()
 
@@ -1313,16 +1454,129 @@ def _compute_rssi_health(
     return low_count, watch_count, worst_rssi
 
 
-def _telemetry_lag_status(lag_seconds: float | None) -> str | None:
+def _low_rssi_system_ids(
+    points_by_key: Mapping[tuple[int, str, str], ModulePoint],
+    *,
+    alert_threshold: int,
+) -> set[int]:
+    """Return systems currently containing low RSSI module points."""
+    systems: set[int] = set()
+    for (system_id, _module_id, metric), point in points_by_key.items():
+        if metric != "RSSI":
+            continue
+        if point.value < alert_threshold:
+            systems.add(system_id)
+    return systems
+
+
+def _telemetry_lag_status(lag_seconds: float | None) -> str:
     """Return telemetry lag status label from fixed thresholds."""
     if lag_seconds is None:
-        return None
+        return "unknown"
     lag_minutes = lag_seconds / 60
     if lag_minutes >= LAG_CRITICAL_MINUTES:
         return "critical"
     if lag_minutes >= LAG_WARNING_MINUTES:
         return "warning"
     return "ok"
+
+
+def _effective_telemetry_lag_status(
+    *,
+    raw_status: str,
+    enable_sunset_alert_guard: bool,
+    solar_alert_context: SolarAlertContext,
+) -> str:
+    """Return effective lag status after optional sunset suppression."""
+    if not enable_sunset_alert_guard:
+        return raw_status
+    if raw_status not in {"warning", "critical"}:
+        return raw_status
+    if solar_alert_context.guard_active:
+        return raw_status
+    return "suppressed_night"
+
+
+def _build_solar_alert_context(
+    *,
+    hass: HomeAssistant,
+    fetched_at: datetime,
+    latest_positive_telemetry_timestamp: datetime | None,
+    min_elevation_degrees: float,
+    positive_power_grace_minutes: int,
+) -> SolarAlertContext:
+    """Build daylight/production context used for alert gating."""
+    positive_age_minutes: float | None = None
+    if latest_positive_telemetry_timestamp is not None:
+        positive_age_minutes = max(
+            0.0,
+            (fetched_at - latest_positive_telemetry_timestamp).total_seconds() / 60.0,
+        )
+    recent_production = (
+        positive_age_minutes is not None
+        and positive_age_minutes <= float(positive_power_grace_minutes)
+    )
+
+    sun_state_obj = hass.states.get("sun.sun")
+    if sun_state_obj is None:
+        return SolarAlertContext(
+            sun_available=False,
+            sun_state="unknown",
+            sun_elevation=None,
+            guard_active=recent_production,
+            guard_reason=(
+                "sun_unavailable_recent_production"
+                if recent_production
+                else "sun_unavailable_no_recent_production"
+            ),
+            latest_positive_telemetry_timestamp=latest_positive_telemetry_timestamp,
+            positive_production_age_minutes=positive_age_minutes,
+        )
+
+    sun_state = sun_state_obj.state if sun_state_obj.state in {"above_horizon", "below_horizon"} else "unknown"
+    sun_elevation = _as_optional_float(sun_state_obj.attributes.get("elevation"))
+    sun_available = sun_state in {"above_horizon", "below_horizon"}
+
+    if (sun_available and sun_elevation is not None and sun_elevation >= min_elevation_degrees) or (sun_available and sun_state == "above_horizon" and sun_elevation is None):
+        guard_active = True
+        guard_reason = "daylight"
+    elif sun_available:
+        guard_active = recent_production
+        guard_reason = (
+            "twilight_recent_production"
+            if recent_production
+            else "night_no_recent_production"
+        )
+    else:
+        guard_active = recent_production
+        guard_reason = (
+            "sun_unavailable_recent_production"
+            if recent_production
+            else "sun_unavailable_no_recent_production"
+        )
+
+    return SolarAlertContext(
+        sun_available=sun_available,
+        sun_state=sun_state,
+        sun_elevation=sun_elevation,
+        guard_active=guard_active,
+        guard_reason=guard_reason,
+        latest_positive_telemetry_timestamp=latest_positive_telemetry_timestamp,
+        positive_production_age_minutes=positive_age_minutes,
+    )
+
+
+def _system_guard_active(system: SystemSnapshot | Any | None) -> bool:
+    """Return whether alert guard is active for one system snapshot."""
+    if system is None:
+        return True
+    context = getattr(system, "solar_alert_context", None)
+    if context is None:
+        return True
+    guard_active = getattr(context, "guard_active", None)
+    if isinstance(guard_active, bool):
+        return guard_active
+    return True
 
 
 def _parsed_has_points(parsed: ParsedAggregateCsv) -> bool:
@@ -1339,6 +1593,18 @@ def _latest_timestamp(parsed: ParsedAggregateCsv) -> datetime | None:
         candidate = max(points, key=lambda item: item[0])[0]
         if latest is None or candidate > latest:
             latest = candidate
+    return latest
+
+
+def _latest_positive_timestamp(parsed: ParsedAggregateCsv) -> datetime | None:
+    """Return latest timestamp where value is strictly positive."""
+    latest: datetime | None = None
+    for points in parsed.rows_by_module.values():
+        for ts, value in points:
+            if value <= 0:
+                continue
+            if latest is None or ts > latest:
+                latest = ts
     return latest
 
 

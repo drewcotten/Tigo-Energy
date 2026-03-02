@@ -21,10 +21,14 @@ from custom_components.tigo_energy.const import (
     DOMAIN,
     ENTRY_MODE_ALL_SYSTEMS,
     ENTRY_MODE_SINGLE_SYSTEM,
+    OPT_ENABLE_ALERT_FEED_NOTIFICATIONS,
     OPT_ENABLE_MODULE_TELEMETRY,
     OPT_ENABLE_PERSISTENT_NOTIFICATIONS,
+    OPT_ENABLE_SUNSET_ALERT_GUARD,
     OPT_MODULE_POLL_SECONDS,
     OPT_SUMMARY_POLL_SECONDS,
+    OPT_SUN_GUARD_MIN_ELEVATION_DEGREES,
+    OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES,
     SUBENTRY_TYPE_SYSTEM,
 )
 
@@ -75,6 +79,10 @@ async def test_config_flow_single_system_success(hass):
                 OPT_MODULE_POLL_SECONDS: 300,
                 OPT_ENABLE_MODULE_TELEMETRY: True,
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: True,
+                OPT_ENABLE_SUNSET_ALERT_GUARD: True,
+                OPT_SUN_GUARD_MIN_ELEVATION_DEGREES: 3.0,
+                OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES: 90,
+                OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: True,
             },
         )
 
@@ -91,6 +99,10 @@ async def test_config_flow_single_system_success(hass):
     assert result["options"][OPT_MODULE_POLL_SECONDS] == 300
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is True
     assert result["options"][OPT_ENABLE_PERSISTENT_NOTIFICATIONS] is True
+    assert result["options"][OPT_ENABLE_SUNSET_ALERT_GUARD] is True
+    assert result["options"][OPT_SUN_GUARD_MIN_ELEVATION_DEGREES] == 3.0
+    assert result["options"][OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES] == 90
+    assert result["options"][OPT_ENABLE_ALERT_FEED_NOTIFICATIONS] is True
 
 
 async def test_config_flow_all_systems_success(hass):
@@ -129,6 +141,10 @@ async def test_config_flow_all_systems_success(hass):
                 OPT_MODULE_POLL_SECONDS: 360,
                 OPT_ENABLE_MODULE_TELEMETRY: False,
                 OPT_ENABLE_PERSISTENT_NOTIFICATIONS: False,
+                OPT_ENABLE_SUNSET_ALERT_GUARD: False,
+                OPT_SUN_GUARD_MIN_ELEVATION_DEGREES: -1.0,
+                OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES: 120,
+                OPT_ENABLE_ALERT_FEED_NOTIFICATIONS: False,
             },
         )
 
@@ -142,6 +158,10 @@ async def test_config_flow_all_systems_success(hass):
     assert result["options"][OPT_MODULE_POLL_SECONDS] == 360
     assert result["options"][OPT_ENABLE_MODULE_TELEMETRY] is False
     assert result["options"][OPT_ENABLE_PERSISTENT_NOTIFICATIONS] is False
+    assert result["options"][OPT_ENABLE_SUNSET_ALERT_GUARD] is False
+    assert result["options"][OPT_SUN_GUARD_MIN_ELEVATION_DEGREES] == -1.0
+    assert result["options"][OPT_SUN_GUARD_POSITIVE_POWER_GRACE_MINUTES] == 120
+    assert result["options"][OPT_ENABLE_ALERT_FEED_NOTIFICATIONS] is False
 
 
 async def test_config_flow_invalid_auth(hass):

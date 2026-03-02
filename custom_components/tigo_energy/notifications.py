@@ -27,6 +27,21 @@ def telemetry_lag_notification_id(entry_id: str) -> str:
     return f"{DOMAIN}_{entry_id}_telemetry_lag"
 
 
+def pv_off_notification_id(entry_id: str) -> str:
+    """Return stable PV-Off notification id for one config entry."""
+    return f"{DOMAIN}_{entry_id}_pv_off"
+
+
+def string_shutdown_notification_id(entry_id: str) -> str:
+    """Return stable string-shutdown notification id for one config entry."""
+    return f"{DOMAIN}_{entry_id}_string_shutdown"
+
+
+def active_alerts_notification_id(entry_id: str) -> str:
+    """Return stable active-alerts notification id for one config entry."""
+    return f"{DOMAIN}_{entry_id}_active_alerts"
+
+
 class TigoConnectionNotifier:
     """Tracks connectivity and RSSI alerts via persistent notifications."""
 
@@ -50,6 +65,21 @@ class TigoConnectionNotifier:
     def telemetry_lag_notification_id(self) -> str:
         """Return telemetry lag notification id."""
         return telemetry_lag_notification_id(self._entry_id)
+
+    @property
+    def pv_off_alert_notification_id(self) -> str:
+        """Return PV-Off notification id."""
+        return pv_off_notification_id(self._entry_id)
+
+    @property
+    def string_shutdown_alert_notification_id(self) -> str:
+        """Return string-shutdown notification id."""
+        return string_shutdown_notification_id(self._entry_id)
+
+    @property
+    def active_alerts_notification_id(self) -> str:
+        """Return active-alerts notification id."""
+        return active_alerts_notification_id(self._entry_id)
 
     async def async_report_connection_failure(self, source: str) -> None:
         """Mark one source as failed and create notification when first failing."""
@@ -92,6 +122,18 @@ class TigoConnectionNotifier:
         persistent_notification.async_dismiss(
             self._hass,
             notification_id=self.telemetry_lag_notification_id,
+        )
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.pv_off_alert_notification_id,
+        )
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.string_shutdown_alert_notification_id,
+        )
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.active_alerts_notification_id,
         )
 
     async def async_report_low_rssi_alert(
@@ -158,4 +200,87 @@ class TigoConnectionNotifier:
         persistent_notification.async_dismiss(
             self._hass,
             notification_id=self.telemetry_lag_notification_id,
+        )
+
+    async def async_report_pv_off_active(
+        self,
+        *,
+        system_names: list[str],
+        system_count: int,
+    ) -> None:
+        """Create/update persistent alert for active PV-Off states."""
+        systems_preview = ", ".join(system_names[:5]) if system_names else "unknown"
+        persistent_notification.async_create(
+            self._hass,
+            message=(
+                f"{self._entry_title} reports PV-Off active on {system_count} system(s). "
+                f"Affected systems: {systems_preview}. "
+                "This indicates PV output may be intentionally shut down."
+            ),
+            title=f"{MANUFACTURER}: PV-Off active",
+            notification_id=self.pv_off_alert_notification_id,
+        )
+
+    async def async_clear_pv_off_alert(self) -> None:
+        """Dismiss PV-Off alert notification."""
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.pv_off_alert_notification_id,
+        )
+
+    async def async_report_string_shutdown_active(
+        self,
+        *,
+        system_names: list[str],
+        system_count: int,
+    ) -> None:
+        """Create/update persistent alert for active string shutdown states."""
+        systems_preview = ", ".join(system_names[:5]) if system_names else "unknown"
+        persistent_notification.async_create(
+            self._hass,
+            message=(
+                f"{self._entry_title} reports string shutdown alerts on {system_count} system(s). "
+                f"Affected systems: {systems_preview}. "
+                "Review inverter/string status and open Tigo alerts for details."
+            ),
+            title=f"{MANUFACTURER}: String shutdown alert",
+            notification_id=self.string_shutdown_alert_notification_id,
+        )
+
+    async def async_clear_string_shutdown_alert(self) -> None:
+        """Dismiss string-shutdown alert notification."""
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.string_shutdown_alert_notification_id,
+        )
+
+    async def async_report_active_alerts(
+        self,
+        *,
+        total_active_alerts: int,
+        affected_system_count: int,
+        latest_alert_title: str | None,
+        latest_alert_code: int | None,
+        latest_alert_time: str | None,
+    ) -> None:
+        """Create/update persistent summary notification for active alerts."""
+        latest_title = latest_alert_title or "unknown"
+        latest_code_text = "unknown" if latest_alert_code is None else str(latest_alert_code)
+        latest_time_text = latest_alert_time or "unknown"
+        persistent_notification.async_create(
+            self._hass,
+            message=(
+                f"{self._entry_title} currently has {total_active_alerts} active alert(s) "
+                f"across {affected_system_count} system(s). "
+                f"Latest: {latest_title} (code {latest_code_text}, time {latest_time_text})."
+            ),
+            title=f"{MANUFACTURER}: Active system alerts",
+            notification_id=self.active_alerts_notification_id,
+        )
+
+    async def async_clear_active_alerts(self) -> None:
+        """Dismiss active-alerts summary notification."""
+        persistent_notification.async_dismiss(
+            self._hass,
+            notification_id=self.active_alerts_notification_id,
         )

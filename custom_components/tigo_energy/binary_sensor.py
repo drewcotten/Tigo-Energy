@@ -14,10 +14,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ATTR_DATA_LAG_SECONDS,
     ATTR_IS_STALE,
+    ATTR_LATEST_POSITIVE_TELEMETRY_TIMESTAMP,
     ATTR_LATEST_STABLE_TIMESTAMP,
+    ATTR_POSITIVE_PRODUCTION_AGE_MINUTES,
+    ATTR_SUN_ELEVATION,
+    ATTR_SUN_STATE,
     ATTR_SYSTEM_DATA_AGE_SECONDS,
     ATTR_SYSTEM_DATA_IS_STALE,
     ATTR_SYSTEM_DATA_TIMESTAMP,
+    ATTR_TELEMETRY_LAG_GUARD_ACTIVE,
+    ATTR_TELEMETRY_LAG_GUARD_REASON,
+    ATTR_TELEMETRY_LAG_STATUS,
+    ATTR_TELEMETRY_LAG_STATUS_RAW,
     DOMAIN,
     MANUFACTURER,
 )
@@ -170,6 +178,36 @@ class TigoAlertBinarySensor(CoordinatorEntity, BinarySensorEntity):
             ATTR_SYSTEM_DATA_TIMESTAMP: system.freshest_timestamp if system else None,
             ATTR_SYSTEM_DATA_AGE_SECONDS: system.system_data_age_seconds if system else None,
             ATTR_SYSTEM_DATA_IS_STALE: system.system_data_is_stale if system else True,
+            ATTR_LATEST_POSITIVE_TELEMETRY_TIMESTAMP: (
+                system.latest_positive_telemetry_timestamp if system else None
+            ),
+            ATTR_TELEMETRY_LAG_STATUS: system.telemetry_lag_status if system else None,
+            ATTR_TELEMETRY_LAG_STATUS_RAW: system.telemetry_lag_status_raw if system else None,
+            ATTR_POSITIVE_PRODUCTION_AGE_MINUTES: (
+                system.solar_alert_context.positive_production_age_minutes
+                if system and system.solar_alert_context
+                else None
+            ),
+            ATTR_SUN_STATE: (
+                system.solar_alert_context.sun_state
+                if system and system.solar_alert_context
+                else None
+            ),
+            ATTR_SUN_ELEVATION: (
+                system.solar_alert_context.sun_elevation
+                if system and system.solar_alert_context
+                else None
+            ),
+            ATTR_TELEMETRY_LAG_GUARD_ACTIVE: (
+                system.solar_alert_context.guard_active
+                if system and system.solar_alert_context
+                else None
+            ),
+            ATTR_TELEMETRY_LAG_GUARD_REASON: (
+                system.solar_alert_context.guard_reason
+                if system and system.solar_alert_context
+                else None
+            ),
         }
         attrs.update(_alert_attributes(system.alert_state if system else None))
         return attrs

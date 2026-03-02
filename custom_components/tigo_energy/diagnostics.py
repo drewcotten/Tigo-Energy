@@ -72,9 +72,30 @@ async def async_get_config_entry_diagnostics(
                     "latest_non_empty_telemetry_timestamp": (
                         system.latest_non_empty_telemetry_timestamp
                     ),
+                    "latest_positive_telemetry_timestamp": (
+                        system.latest_positive_telemetry_timestamp
+                    ),
                     "heartbeat_age_seconds": system.heartbeat_age_seconds,
                     "telemetry_lag_seconds": system.telemetry_lag_seconds,
                     "telemetry_lag_status": system.telemetry_lag_status,
+                    "telemetry_lag_status_raw": system.telemetry_lag_status_raw,
+                    "solar_alert_context": (
+                        {
+                            "sun_available": system.solar_alert_context.sun_available,
+                            "sun_state": system.solar_alert_context.sun_state,
+                            "sun_elevation": system.solar_alert_context.sun_elevation,
+                            "guard_active": system.solar_alert_context.guard_active,
+                            "guard_reason": system.solar_alert_context.guard_reason,
+                            "latest_positive_telemetry_timestamp": (
+                                system.solar_alert_context.latest_positive_telemetry_timestamp
+                            ),
+                            "positive_production_age_minutes": (
+                                system.solar_alert_context.positive_production_age_minutes
+                            ),
+                        }
+                        if system.solar_alert_context
+                        else None
+                    ),
                     "system_status": system.system_status,
                     "recent_alert_count": system.recent_alert_count,
                     "has_monitored_modules": system.has_monitored_modules,

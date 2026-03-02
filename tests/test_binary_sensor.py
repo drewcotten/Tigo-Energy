@@ -14,6 +14,7 @@ from custom_components.tigo_energy.const import DOMAIN
 from custom_components.tigo_energy.models import (
     AlertRecord,
     FreshnessState,
+    SolarAlertContext,
     SummarySnapshot,
     SystemAlertState,
     SystemSnapshot,
@@ -54,15 +55,26 @@ def _snapshot(pv_off: bool, shutdown: bool) -> SummarySnapshot:
                 system_data_is_stale=False,
                 latest_source_checkin=now,
                 latest_non_empty_telemetry_timestamp=now,
+                latest_positive_telemetry_timestamp=now,
                 heartbeat_age_seconds=60.0,
                 telemetry_lag_seconds=120.0,
                 telemetry_lag_status="ok",
+                telemetry_lag_status_raw="ok",
                 alert_state=SystemAlertState(
                     active_count=1,
                     latest_active_alert=latest,
                     pv_off_active=pv_off,
                     string_shutdown_active=shutdown,
                     alerts_supported=True,
+                ),
+                solar_alert_context=SolarAlertContext(
+                    sun_available=True,
+                    sun_state="above_horizon",
+                    sun_elevation=12.0,
+                    guard_active=True,
+                    guard_reason="daylight",
+                    latest_positive_telemetry_timestamp=now,
+                    positive_production_age_minutes=1.0,
                 ),
                 module_label_map={},
             )
@@ -112,6 +124,10 @@ async def test_pv_off_binary_sensor_state_and_attributes(hass):
     attrs = sensor.extra_state_attributes
     assert attrs["alerts_supported"] is True
     assert attrs["latest_alert_id"] == 1
+    assert attrs["telemetry_lag_status"] == "ok"
+    assert attrs["telemetry_lag_status_raw"] == "ok"
+    assert attrs["telemetry_lag_guard_active"] is True
+    assert attrs["sun_state"] == "above_horizon"
 
 
 async def test_shutdown_binary_sensor_off(hass):
