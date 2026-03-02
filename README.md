@@ -29,32 +29,35 @@ No YAML is required.
 
 ## Features
 
-- Native Home Assistant onboarding with one account hub entry and per-system subentries (**Add system** to expand).
-- Optional panel telemetry from minute aggregate data: panel input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus array rollup sensors.
-- System and source monitoring: power/energy summary plus heartbeat, control state, firmware, and gateway state.
-- Read-only alert visibility: `PV-Off active`, `String shutdown active`, and system alert summary sensors.
-- Lag-aware cloud handling (rolling backfill, empty-window fallback, freshness/lag diagnostics).
-- Configurable persistent notifications with per-channel toggles and optional sunset guard.
+- Easy setup from Home Assistant UI: add your Tigo account once, then add each system with **Add system**.
+- Optional panel details: per-panel input power, voltage, current, and RSSI (`Pin`, `Vin`, `Iin`, `RSSI`), plus per-array rollup sensors.
+- Clear system overview: current power and daily, YTD, and lifetime energy.
+- Source/gateway health tracking: last check-in, control state, firmware version, and gateway count.
+- Read-only safety and alert visibility: `PV-Off active`, `String shutdown active`, and active alert summary sensors.
+- Built for delayed cloud data: rolling backfill, empty-window retry, and freshness/lag diagnostics.
+- Persistent notifications you can tune: per-alert toggles and optional night/sunset guard for lag and RSSI alerts.
 
 ## Tigo API Data Time Lag
 
-Tigo cloud data is not strictly real-time. The newest available minute can trail wall-clock time because field uploads and cloud-side processing are asynchronous.
+Tigo cloud data is delayed by design.
+The value you see now is often the most recent **processed** cloud value, not the panel's exact current output.
 
-What to expect:
+### What to expect
 
-- Minute telemetry is commonly delayed by about 10-20 minutes.
-- Delay can be longer during connectivity issues or cloud-side processing slowdowns.
-- Short windows can intermittently return empty/minimal data, then appear later.
+- New panel data is often about **10-20 minutes behind** real time.
+- During outages, weak connectivity, or cloud delays, lag can be longer.
 
-How this integration handles it:
+### How this integration handles it
 
-- Polls with a lag-aware trailing window instead of asking only for "now".
-- Uses `recent_cutoff_minutes` as an optional operator control (default `0` = no intentional cutoff).
-- Uses rolling backfill (`backfill_window_minutes`) so late-arriving data is picked up.
-- Retries once with a wider lookback if short-window results are empty.
-- Marks data as stale via attributes/diagnostics when data age exceeds `stale_threshold_seconds`.
+- Polls a trailing time window.
+- Uses rolling backfill (`backfill_window_minutes`) to pick up late-arriving data.
+- Supports `recent_cutoff_minutes` as an optional stability control (default `0` = disabled).
+- Exposes freshness/staleness diagnostics when data age passes `stale_threshold_seconds`.
 
-In Home Assistant, this data behaves as latest-state cloud telemetry, not true real-time meter data. Use freshness and lag fields (for example `telemetry_lag_status`, `system_data_is_stale`, and `module_data_is_stale`) in automations instead of assuming current-minute updates.
+### What this means in Home Assistant
+
+Treat these sensors as **latest cloud telemetry**, not true real-time measurements.
+For automations, check freshness fields such as `telemetry_lag_status`, `system_data_is_stale`, and `module_data_is_stale` before taking action.
 
 ## Latest-State vs Historical Backfill
 
@@ -115,25 +118,25 @@ Authentication behavior is internal: bearer tokens are obtained/stored by the in
 
 All options are configurable in **Settings > Devices & Services > Tigo Energy > Configure**:
 
-- `summary_poll_seconds` (default `60`)
-- `module_poll_seconds` (default `300`)
-- `enable_module_telemetry` (default `false`, also selectable during onboarding)
-- `enable_persistent_notifications` (default `true`, master switch)
-- `notify_connection_issues` (default `true`)
-- `notify_low_rssi` (default `false`)
-- `notify_telemetry_lag` (default `false`)
-- `notify_pv_off` (default `true`)
-- `notify_string_shutdown` (default `true`)
-- `notify_active_alert_summary` (default `false`)
-- `enable_sunset_alert_guard` (default `true`)
-- `sun_guard_min_elevation_degrees` (default `3.0`)
-- `sun_guard_positive_power_grace_minutes` (default `90`)
-- `stale_threshold_seconds` (default `1800`)
-- `backfill_window_minutes` (default `120`)
-- `recent_cutoff_minutes` (default `0`)
-- `rssi_watch_threshold` (default `120`)
-- `rssi_alert_threshold` (default `80`)
-- `rssi_alert_consecutive_polls` (default `3`)
+- `summary_poll_seconds` (default `60`): Poll interval for system/source summary sensors.
+- `module_poll_seconds` (default `300`): Poll interval for panel and array telemetry sensors.
+- `enable_module_telemetry` (default `false`, also selectable during onboarding): Enable per-panel `Pin`/`Vin`/`Iin`/`RSSI` telemetry and array rollups.
+- `enable_persistent_notifications` (default `true`, master switch): Global on/off for integration-created persistent notifications.
+- `notify_connection_issues` (default `true`): Notify when API/setup connectivity fails and when it recovers.
+- `notify_low_rssi` (default `false`): Notify on sustained low panel RSSI based on thresholds/debounce.
+- `notify_telemetry_lag` (default `false`): Notify when heartbeat-vs-telemetry lag reaches critical state.
+- `notify_pv_off` (default `true`): Notify when any tracked system is in PV-Off state.
+- `notify_string_shutdown` (default `true`): Notify when string shutdown is detected from alert/state signals.
+- `notify_active_alert_summary` (default `false`): Notify when active system alerts are present.
+- `enable_sunset_alert_guard` (default `true`): Suppress lag/RSSI data-quality notifications at night.
+- `sun_guard_min_elevation_degrees` (default `3.0`): Sun elevation threshold used by sunset guard.
+- `sun_guard_positive_power_grace_minutes` (default `90`): Keep lag/RSSI alerting active for this many minutes after last positive production.
+- `stale_threshold_seconds` (default `1800`): Age threshold used to mark data as stale in attributes/diagnostics.
+- `backfill_window_minutes` (default `120`): Trailing lookback window used when polling minute telemetry.
+- `recent_cutoff_minutes` (default `0`): Optional near-now exclusion window for telemetry requests.
+- `rssi_watch_threshold` (default `120`): RSSI level considered weak/watch.
+- `rssi_alert_threshold` (default `80`): RSSI level considered alert/critical.
+- `rssi_alert_consecutive_polls` (default `3`): Number of consecutive low-RSSI polls before alerting.
 
 ## Entities
 
@@ -200,6 +203,11 @@ System entities/devices are created per configured system subentry, including ca
 - Input voltage
 - Input current
 - RSSI
+
+Panel sensor attributes include:
+
+- `module_id`: semantic panel label (for example `A1`)
+- `raw_module_id`: raw object/module-style ID when available from Tigo metadata
 
 When available, panel devices/entities use Tigo semantic labels from aggregate key headers (for example `A1`, `B12`, `C3`) and are associated to array devices derived from `/system/layout`. If a semantic label is not present, the integration falls back to module ID-style naming.
 For multi-system accounts, panel entities use deterministic system-scoped object IDs to avoid `_2`, `_3` slug collisions when multiple systems have the same panel label.

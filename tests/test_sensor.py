@@ -680,6 +680,9 @@ async def test_module_sensor_uses_system_scoped_panel_naming(hass):
     assert sensor.device_info["name"] == "Site One Panel A1"
     assert sensor.device_info["via_device"] == (DOMAIN, "array_1001_string_1")
     assert sensor._attr_suggested_object_id == "system_1001_panel_a1_pin"
+    attrs = sensor.extra_state_attributes
+    assert attrs["module_id"] == "A1"
+    assert attrs["raw_module_id"] == "89287797"
 
 
 async def test_array_sensor_computes_derived_metrics(hass):

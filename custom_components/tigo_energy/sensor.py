@@ -1062,6 +1062,8 @@ class TigoModuleSensor(TigoBaseEntity):
         )
         rssi_watch_threshold, rssi_alert_threshold = _rssi_thresholds_from_entry(self._entry)
         stale_threshold_seconds = _stale_threshold_seconds_from_entry(self._entry)
+        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
+        raw_module_id = _raw_module_id_for_label(system, self._module_id)
         module_data_age_seconds = (
             max(0.0, (module_freshness.fetched_at - point.timestamp).total_seconds())
             if module_freshness and point
@@ -1073,6 +1075,7 @@ class TigoModuleSensor(TigoBaseEntity):
         attrs.update(
             {
                 "module_id": self._module_id,
+                "raw_module_id": raw_module_id,
                 "metric": self._metric,
                 ATTR_MODULE_DATA_TIMESTAMP: point.timestamp if point else None,
                 "module_latest_timestamp": point.timestamp if point else None,
@@ -1081,7 +1084,6 @@ class TigoModuleSensor(TigoBaseEntity):
                 ATTR_MODULE_DATA_IS_STALE: module_data_is_stale,
             }
         )
-        system = self._runtime.summary_coordinator.data.systems.get(self._system_id)
         array = _array_for_module(system, self._module_id)
         attrs["array_id"] = array.array_id if array else None
         attrs["array_name"] = array.name if array else None
@@ -1236,6 +1238,29 @@ def _array_for_module(system: SystemSnapshot | None, module_id: str) -> ArraySna
     if array_id is None:
         return None
     return system.arrays.get(array_id)
+
+
+def _raw_module_id_for_label(system: SystemSnapshot | None, module_id: str) -> str | None:
+    """Return raw module/object-style ID for a semantic panel label when available."""
+    if system is None:
+        return module_id if module_id.isdigit() else None
+
+    # If the module id itself is raw, return it unchanged.
+    if module_id in system.module_label_map:
+        return module_id
+
+    candidates = [
+        raw_id
+        for raw_id, semantic_label in system.module_label_map.items()
+        if semantic_label == module_id
+    ]
+    if not candidates:
+        return module_id if module_id.isdigit() else None
+
+    numeric_candidates = [candidate for candidate in candidates if candidate.isdigit()]
+    pool = numeric_candidates or candidates
+    # Prefer longer numeric IDs (typically object_id-style), then lexical order.
+    return sorted(pool, key=lambda value: (-len(value), value))[0]
 
 
 def _system_panel_labels(system: SystemSnapshot | None) -> tuple[str, ...]:
