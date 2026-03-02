@@ -47,14 +47,6 @@ Notes:
 - This integration is read-only and does not send hardware control commands.
 - If a device is not returned by your Premium API scope, it cannot be surfaced here.
 
-## Documentation
-
-- [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
-- [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
-- [Read-Only Alerts Live Probe (2026-03-01)](docs/tigo-readonly-alerts-live-probe-2026-03-01.md)
-- [Entity Name Reference (Example IDs)](docs/entity-name-reference.md)
-- [Persistent Notifications Reference](docs/persistent-notifications-reference.md)
-
 ## Features
 
 - Easy setup from Home Assistant UI: add your Tigo account once, then add each system with **Add system**.
@@ -368,6 +360,14 @@ The integration can suppress data-quality alert escalation at night while keepin
 - **Data appears delayed**: expected with cloud lag; tune `backfill_window_minutes` (and optionally `recent_cutoff_minutes` if needed for stability).
 - **Panel names changed after upgrade**: expected once per install when semantic labels are available; the integration migrates old raw numeric module IDs to label-based IDs (for example `89287797` -> `A1`) in Home Assistant registry.
 - **Too many entities**: disable panel telemetry and/or array telemetry, or increase module poll interval.
+
+## Documentation
+
+- [Tigo API Integration Notes](docs/tigo-api-integration-notes.md)
+- [Tigo Terms Glossary (Home Assistant Mapping)](docs/tigo-terms-glossary-home-assistant.md)
+- [Read-Only Alerts Live Probe (2026-03-01)](docs/tigo-readonly-alerts-live-probe-2026-03-01.md)
+- [Entity Name Reference (Example IDs)](docs/entity-name-reference.md)
+- [Persistent Notifications Reference](docs/persistent-notifications-reference.md)
 
 ## Credential Storage and Security
 
